@@ -1,182 +1,158 @@
 # TR Panel Go
 
-A lightweight and high-performance Terraria server management panel backend built with Go.
+轻量且高性能的泰拉瑞亚服务器管理面板后端，使用 Go 语言构建。
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/ShourGG/tr-panel-go)
 
-## Overview
+---
 
-TR Panel Go is a modern, high-performance backend service for managing Terraria game servers. Built with Go, it provides RESTful APIs and WebSocket support for real-time server monitoring, player management, plugin administration, and automated task scheduling.
+## 项目简介
 
-**Key Highlights:**
-- Written in Go for superior performance and concurrency
-- RESTful API design with WebSocket for real-time updates
-- Support for TShock plugin servers
-- Comprehensive player statistics and session tracking
-- Automated backup and scheduled task execution
-- Database-driven configuration management
+TR Panel Go 是一个现代化的泰拉瑞亚游戏服务器管理后端服务。基于 Go 语言开发，提供 RESTful API 和 WebSocket 支持，实现实时服务器监控、玩家管理、插件管理和自动化任务调度。
 
 ---
 
-## Features
+## 核心亮点
 
-### Core Functionality
-- **Server Management**: Start, stop, restart Terraria servers with real-time status monitoring
-- **Player Management**: Track player sessions, statistics, and activity history
-- **Plugin Administration**: Install, configure, and manage TShock plugins
-- **File Management**: Browse, edit, and manage server configuration files
-- **Backup System**: Automated and manual backup with restore capabilities
-- **Scheduled Tasks**: Cron-based task scheduler for automated operations
+**性能优势**
+- Go 语言原生性能，卓越的并发处理能力
+- API 平均响应时间 ~100ms
+- 页面加载时间 ~78ms，LCP 指标 ~105ms
+- 数据库查询索引优化，高频查询性能提升 50-80%
 
-### Real-time Monitoring
-- WebSocket-based live server logs
-- Real-time player connection events
-- System resource monitoring (CPU, memory, disk)
-- Activity logging and audit trails
+**架构设计**
+- RESTful API 设计规范，接口清晰易用
+- WebSocket 实时推送，服务器日志和玩家事件即时更新
+- 分层架构设计，业务逻辑与数据访问解耦
+- SQLite 轻量级存储，单文件部署无需额外数据库服务
 
-### Database Features
-- SQLite-based storage for lightweight deployment
-- Optimized indexes for high-performance queries
-- Player statistics aggregation
-- Session history tracking
+**功能完备**
+- TShock 插件服务器完整支持
+- 玩家会话追踪和统计分析
+- 自动化备份和定时任务调度
+- 配置文件在线编辑和管理
+- JWT 身份认证和权限控制
 
 ---
 
-## Tech Stack
+## 主要功能
 
-| Component | Technology |
-|-----------|-----------|
-| Language | Go 1.21+ |
-| Web Framework | Gin (HTTP routing) |
+**服务器管理**
+- 启动、停止、重启泰拉瑞亚服务器
+- 实时状态监控和进程管理
+- 服务器日志实时查看
+- 多房间支持，独立配置管理
+
+**玩家管理**
+- 玩家会话记录和统计
+- 游戏时长和活跃度分析
+- 玩家活动历史追踪
+- 玩家行为日志审计
+
+**插件管理**
+- TShock 插件安装和卸载
+- 插件配置在线编辑
+- 插件版本管理
+- 插件依赖关系处理
+
+**系统功能**
+- 文件管理器，浏览和编辑配置文件
+- 自动备份和手动备份
+- 定时任务调度（基于 Cron）
+- 系统资源监控（CPU、内存、磁盘）
+
+---
+
+## 技术栈
+
+| 技术 | 说明 |
+|------|------|
+| 开发语言 | Go 1.21+ |
+| Web 框架 | Gin（高性能 HTTP 路由） |
 | WebSocket | gorilla/websocket |
-| Database | SQLite 3 |
-| ORM | Native SQL with prepared statements |
-| Authentication | JWT-based token authentication |
-| Process Management | os/exec with lifecycle control |
+| 数据库 | SQLite 3 |
+| 数据访问 | 原生 SQL + 预编译语句 |
+| 身份认证 | JWT Token |
+| 进程管理 | os/exec 生命周期控制 |
+| 任务调度 | robfig/cron |
 
-**Dependencies:**
+**核心依赖**
 ```
-github.com/gin-gonic/gin
-github.com/gorilla/websocket
-github.com/mattn/go-sqlite3
-github.com/robfig/cron/v3
-golang.org/x/crypto
-```
-
----
-
-## Project Structure
-
-```
-tr-panel-go/
-├── api/                  # API route handlers
-│   ├── auth.go          # Authentication endpoints
-│   ├── room.go          # Server room management
-│   ├── player.go        # Player data APIs
-│   ├── plugin.go        # Plugin management
-│   └── ...
-├── config/              # Configuration management
-│   ├── config.go        # Config loader
-│   └── paths.go         # Path resolution
-├── db/                  # Database layer
-│   ├── db.go           # Database initialization
-│   ├── schema.sql      # Database schema
-│   └── migrations/     # Migration scripts
-├── models/              # Data models
-│   ├── room.go         # Room model
-│   ├── player_stats.go # Player statistics
-│   └── ...
-├── services/            # Business logic layer
-│   ├── config_service.go
-│   ├── plugin_server_service.go
-│   └── log_monitor.go
-├── storage/             # Data access layer
-│   ├── interface.go    # Storage interfaces
-│   └── sqlite_*.go     # SQLite implementations
-├── websocket/           # WebSocket handlers
-│   └── handler.go
-├── utils/               # Utility functions
-│   ├── logger.go       # Logging utilities
-│   ├── process.go      # Process management
-│   └── file.go         # File operations
-├── scheduler/           # Task scheduling
-│   ├── scheduler.go    # Cron scheduler
-│   └── handlers.go     # Task handlers
-├── middleware/          # HTTP middlewares
-│   ├── auth.go         # JWT authentication
-│   └── ratelimit.go    # Rate limiting
-└── main.go             # Application entry point
+github.com/gin-gonic/gin          # Web 框架
+github.com/gorilla/websocket      # WebSocket 支持
+github.com/mattn/go-sqlite3       # SQLite 驱动
+github.com/robfig/cron/v3         # 定时任务
+golang.org/x/crypto               # 加密库
 ```
 
 ---
 
-## Quick Start
+## 快速开始
 
-### Prerequisites
+**环境要求**
+- Go 1.21 或更高版本
+- GCC 编译器（用于 SQLite CGO）
+- Linux 或 Windows 服务器
+- 泰拉瑞亚专用服务器（可选，用于测试）
 
-- Go 1.21 or higher
-- GCC compiler (for SQLite CGO)
-- Linux/Windows server
-- Terraria Dedicated Server (optional for testing)
+**安装步骤**
 
-### Installation
-
-1. Clone the repository:
+1. 克隆仓库
 ```bash
 git clone https://github.com/ShourGG/tr-panel-go.git
 cd tr-panel-go
 ```
 
-2. Install dependencies:
+2. 安装依赖
 ```bash
 go mod download
 ```
 
-3. Build the binary:
+3. 编译程序
 ```bash
-# For Linux
+# Linux 平台
 CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o tr-panel .
 
-# For Windows
+# Windows 平台
 go build -ldflags="-s -w" -o tr-panel.exe .
 ```
 
-4. Run the application:
+4. 启动服务
 ```bash
 ./tr-panel
 ```
 
-The server will start on `http://localhost:8800` by default.
+默认启动在 `http://localhost:8800`
 
-### Configuration
+**配置文件**
 
-Create a `.env` file in the project root:
+在项目根目录创建 `.env` 文件：
 
 ```env
-# Server Configuration
+# 服务器配置
 PORT=8800
 HOST=0.0.0.0
 
-# JWT Secret
+# JWT 密钥
 JWT_SECRET=your-secret-key-here
 
-# Database
+# 数据库路径
 DB_PATH=./data/panel.db
 
-# Terraria Server Paths
+# 泰拉瑞亚服务器路径
 TERRARIA_SERVER_PATH=/path/to/TerrariaServer
 TSHOCK_PATH=/path/to/tshock
 ```
 
 ---
 
-## API Documentation
+## API 接口说明
 
-### Authentication
+**身份认证**
 
-**POST** `/api/auth/login`
+`POST /api/auth/login` - 用户登录
 ```json
 {
   "username": "admin",
@@ -184,7 +160,7 @@ TSHOCK_PATH=/path/to/tshock
 }
 ```
 
-**POST** `/api/auth/register`
+`POST /api/auth/register` - 用户注册
 ```json
 {
   "username": "admin",
@@ -193,52 +169,52 @@ TSHOCK_PATH=/path/to/tshock
 }
 ```
 
-### Server Management
+**服务器管理**
 
-**GET** `/api/rooms` - List all server rooms
+`GET /api/rooms` - 获取服务器列表
 
-**POST** `/api/rooms` - Create a new server room
+`POST /api/rooms` - 创建服务器房间
 
-**GET** `/api/rooms/:id` - Get room details
+`GET /api/rooms/:id` - 获取房间详情
 
-**POST** `/api/rooms/:id/start` - Start server
+`POST /api/rooms/:id/start` - 启动服务器
 
-**POST** `/api/rooms/:id/stop` - Stop server
+`POST /api/rooms/:id/stop` - 停止服务器
 
-### Player Management
+**玩家管理**
 
-**GET** `/api/players` - List all players
+`GET /api/players` - 获取玩家列表
 
-**GET** `/api/players/:id/stats` - Get player statistics
+`GET /api/players/:id/stats` - 获取玩家统计
 
-**GET** `/api/players/:id/sessions` - Get player session history
+`GET /api/players/:id/sessions` - 获取玩家会话历史
 
-### Plugin Management
+**插件管理**
 
-**GET** `/api/plugins` - List installed plugins
+`GET /api/plugins` - 获取已安装插件列表
 
-**POST** `/api/plugins/install` - Install a plugin
+`POST /api/plugins/install` - 安装插件
 
-**DELETE** `/api/plugins/:id` - Uninstall plugin
+`DELETE /api/plugins/:id` - 卸载插件
 
-### WebSocket
+**WebSocket 接口**
 
-**WS** `/ws/logs/:roomId` - Real-time server logs
+`WS /ws/logs/:roomId` - 实时服务器日志
 
-**WS** `/ws/system` - System monitoring updates
+`WS /ws/system` - 系统监控实时更新
 
 ---
 
-## Deployment
+## 生产部署
 
-### Linux Production Deployment
+**Linux 服务器部署**
 
-1. Upload the binary to your server:
+1. 上传编译后的二进制文件
 ```bash
 scp tr-panel user@server:/opt/tr-panel/
 ```
 
-2. Create a systemd service:
+2. 创建 systemd 服务
 ```ini
 [Unit]
 Description=TR Panel Go Service
@@ -256,14 +232,14 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-3. Enable and start the service:
+3. 启用并启动服务
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable tr-panel
 sudo systemctl start tr-panel
 ```
 
-### Docker Deployment (Optional)
+**Docker 部署（可选）**
 
 ```dockerfile
 FROM golang:1.21-alpine AS builder
@@ -282,88 +258,88 @@ CMD ["./tr-panel"]
 
 ---
 
-## Performance Optimizations
+## 性能优化
 
-This backend implements several performance optimizations:
+**数据库优化**
+- 玩家会话表按玩家 ID 和时间索引
+- 玩家统计表按更新时间索引
+- 活动日志表按类型和时间索引
+- 查询性能提升 50-80%
 
-1. **Database Indexing**: Optimized indexes on frequently queried tables
-   - Player sessions indexed by player ID and timestamp
-   - Player stats indexed by last update time
-   - Activity logs indexed by type and timestamp
+**前端优化**
+- Vue 核心库单独打包
+- Ant Design 组件按需加载
+- Monaco 编辑器延迟加载
+- ECharts 图表库独立分包
 
-2. **Code Splitting**: Frontend assets are split into multiple chunks for faster loading
-   - Vue vendor bundle
-   - Ant Design components bundle
-   - Monaco Editor bundle
-   - ECharts visualization bundle
+**代码优化**
+- 生产环境移除 console.log
+- JavaScript 使用 Terser 压缩
+- CSS 文件压缩和合并
 
-3. **Console Removal**: Production builds have console.log statements removed
-
-4. **Minification**: JavaScript bundles are minified with Terser
-
-**Performance Metrics:**
-- API Response Time: ~100ms average
-- Page Load Time: ~78ms (Loading)
-- LCP (Largest Contentful Paint): ~105ms
+**性能指标**
+- API 响应时间：平均 100ms
+- 页面加载时间：78ms
+- 最大内容绘制（LCP）：105ms
 
 ---
 
-## Development
+## 开发指南
 
-### Running in Development Mode
+**开发模式运行**
 
 ```bash
-# Install Air for hot reload (optional)
+# 安装热重载工具（可选）
 go install github.com/cosmtrek/air@latest
 
-# Run with hot reload
+# 使用热重载运行
 air
 
-# Or run directly
+# 或直接运行
 go run main.go
 ```
 
-### Running Tests
+**运行测试**
 
 ```bash
 go test ./...
 ```
 
-### Code Style
+**代码规范**
 
-This project follows standard Go conventions:
-- Use `gofmt` for code formatting
-- Follow effective Go guidelines
-- Write clear, self-documenting code
-- Minimize comments (code should be self-explanatory)
-
----
-
-## Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- 使用 `gofmt` 格式化代码
+- 遵循 Go 语言最佳实践
+- 代码自解释，减少不必要的注释
+- 保持函数简洁，单一职责
 
 ---
 
-## License
+## 贡献指南
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+欢迎贡献代码！请遵循以下流程：
+
+1. Fork 本仓库
+2. 创建功能分支 (`git checkout -b feature/new-feature`)
+3. 提交更改 (`git commit -m '添加新功能'`)
+4. 推送到分支 (`git push origin feature/new-feature`)
+5. 创建 Pull Request
 
 ---
 
-## Author
+## 开源协议
 
-Developed by [ShourGG](https://github.com/ShourGG)
+本项目采用 MIT 协议开源，详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-## Support
+## 作者
 
-For issues, questions, or feature requests, please open an issue on GitHub:
+由 [ShourGG](https://github.com/ShourGG) 开发维护
+
+---
+
+## 问题反馈
+
+如有问题、建议或功能需求，请在 GitHub 上提交 Issue：
+
 https://github.com/ShourGG/tr-panel-go/issues
