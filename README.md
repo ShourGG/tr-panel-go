@@ -3,7 +3,7 @@
 轻量且高性能的泰拉瑞亚服务器管理面板后端，使用 Go 语言构建。
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey.svg)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/network)
 [![GitHub Issues](https://img.shields.io/github/issues/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/issues)
