@@ -4,7 +4,12 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/ShourGG/tr-panel-go)
+[![GitHub Stars](https://img.shields.io/github/stars/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/network)
+[![GitHub Issues](https://img.shields.io/github/issues/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/issues)
+[![GitHub Last Commit](https://img.shields.io/github/last-commit/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/commits)
+[![Code Size](https://img.shields.io/github/languages/code-size/ShourGG/tr-panel-go?style=flat)](https://github.com/ShourGG/tr-panel-go)
+[![Top Language](https://img.shields.io/github/languages/top/ShourGG/tr-panel-go?style=flat)](https://github.com/ShourGG/tr-panel-go)
 
 ---
 
