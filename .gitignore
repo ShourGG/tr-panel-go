@@ -1,0 +1,31 @@
+# 编译输出
+dist/
+*.exe
+
+# 开发环境
+.env
+.vscode/
+.idea/
+
+# 日志
+*.log
+logs/
+
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# 临时文件
+*.tmp
+*.temp
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
