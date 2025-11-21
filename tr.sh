@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -257,10 +257,10 @@ change_port() {
     check_root
     echo -e "${YELLOW}当前端口: ${PORT}${NC}"
     echo ""
-    read -p "请输入新端口 (1024-65535): " NEW_PORT
+    read -p "请输入新端口 (1-65535): " NEW_PORT
     
-    if ! [[ "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1024 ] || [ "$NEW_PORT" -gt 65535 ]; then
-        echo -e "${RED}错误: 端口必须是 1024-65535 之间的数字${NC}"
+    if ! [[ "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1 ] || [ "$NEW_PORT" -gt 65535 ]; then
+        echo -e "${RED}错误: 端口必须是 1-65535 之间的数字${NC}"
         return
     fi
     
