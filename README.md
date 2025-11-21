@@ -13,6 +13,26 @@
 
 ---
 
+## 快速安装
+
+**系统要求：** Ubuntu 24+ （低版本可能出现 GLIBC 版本报错）
+
+**一键安装：**
+
+```bash
+wget -O tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
+```
+
+或使用 curl：
+
+```bash
+curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
+```
+
+运行后选择 **[0]** 下载并启动服务，默认端口：**8800**
+
+---
+
 ## 项目简介
 
 泰拉瑞亚游戏服务器管理后端，提供 RESTful API 和 WebSocket 实时通信，支持服务器监控、玩家管理、插件管理和自动化任务调度。
