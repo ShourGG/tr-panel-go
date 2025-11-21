@@ -68,8 +68,8 @@ version_gt() {
 
 # 检查脚本更新
 check_script_update() {
-    # 获取远程版本号
-    REMOTE_VERSION=$(curl -s --connect-timeout 3 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh | grep "^SCRIPT_VERSION=" | head -1 | cut -d'"' -f2)
+    # 获取远程版本号（超时1秒）
+    REMOTE_VERSION=$(timeout 1 curl -s --connect-timeout 1 --max-time 1 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh 2>/dev/null | grep "^SCRIPT_VERSION=" | head -1 | cut -d'"' -f2)
     
     if [ -z "$REMOTE_VERSION" ]; then
         return
