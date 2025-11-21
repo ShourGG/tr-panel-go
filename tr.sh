@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.1"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -123,8 +123,9 @@ show_menu() {
     echo "————————————————————————————————————————"
     echo "[7]: 查看状态 (View status)"
     echo "[8]: 查看日志 (View logs)"
-    echo "[9]: 卸载面板 (Uninstall)"
-    echo "[10]: 退出脚本 (Exit)"
+    echo "[9]: 修改端口 (Change port)"
+    echo "[10]: 卸载面板 (Uninstall)"
+    echo "[11]: 退出脚本 (Exit)"
     echo "————————————————————————————————————————"
     echo ""
 }
@@ -251,6 +252,34 @@ view_logs() {
     journalctl -u $SERVICE_NAME -f
 }
 
+# 修改端口
+change_port() {
+    check_root
+    echo -e "${YELLOW}当前端口: ${PORT}${NC}"
+    echo ""
+    read -p "请输入新端口 (1024-65535): " NEW_PORT
+    
+    if ! [[ "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1024 ] || [ "$NEW_PORT" -gt 65535 ]; then
+        echo -e "${RED}错误: 端口必须是 1024-65535 之间的数字${NC}"
+        return
+    fi
+    
+    # 更新systemd服务配置
+    sed -i "s/Environment=\"PORT=[0-9]*\"/Environment=\"PORT=${NEW_PORT}\"/" /etc/systemd/system/${SERVICE_NAME}.service
+    
+    # 更新脚本中的默认端口
+    sed -i "s/^PORT=.*/PORT=${NEW_PORT}/" "$0"
+    
+    # 重启服务
+    systemctl daemon-reload
+    systemctl restart $SERVICE_NAME
+    
+    echo -e "${GREEN}端口已修改为: ${NEW_PORT}${NC}"
+    echo -e "访问地址: ${GREEN}http://$(hostname -I | awk '{print $1}'):${NEW_PORT}${NC}"
+    
+    PORT=$NEW_PORT
+}
+
 # 卸载面板
 uninstall() {
     check_root
@@ -269,7 +298,7 @@ uninstall() {
 # 主循环
 while true; do
     show_menu
-    read -p "请输入选择 (Please enter your selection) [0-10]: " choice
+    read -p "请输入选择 (Please enter your selection) [0-11]: " choice
     
     case $choice in
         0)
@@ -307,10 +336,14 @@ while true; do
             view_logs
             ;;
         9)
-            uninstall
+            change_port
             read -p "按回车键继续..."
             ;;
         10)
+            uninstall
+            read -p "按回车键继续..."
+            ;;
+        11)
             echo -e "${GREEN}退出脚本${NC}"
             exit 0
             ;;
