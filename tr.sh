@@ -38,6 +38,9 @@
 
 set -e
 
+# 脚本版本
+SCRIPT_VERSION="1.0.0"
+
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
@@ -49,6 +52,7 @@ PORT=8800
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # 检查是否为root用户
@@ -56,6 +60,32 @@ check_root() {
     if [ "$EUID" -ne 0 ]; then 
         echo -e "${RED}错误: 请使用 root 用户或 sudo 运行此脚本${NC}"
         exit 1
+    fi
+}
+
+# 版本比较函数
+version_gt() {
+    test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"
+}
+
+# 检查脚本更新
+check_script_update() {
+    # 获取远程版本号
+    REMOTE_VERSION=$(curl -s --connect-timeout 3 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh | grep "^SCRIPT_VERSION=" | head -1 | cut -d'"' -f2)
+    
+    if [ -z "$REMOTE_VERSION" ]; then
+        return
+    fi
+    
+    # 比较版本
+    if version_gt "$REMOTE_VERSION" "$SCRIPT_VERSION"; then
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}  发现新版本！${NC}"
+        echo -e "${YELLOW}  当前版本: ${SCRIPT_VERSION}${NC}"
+        echo -e "${YELLOW}  最新版本: ${REMOTE_VERSION}${NC}"
+        echo -e "${YELLOW}  建议选择 [6] 更新脚本${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
     fi
 }
 
@@ -71,11 +101,15 @@ show_menu() {
     fi
     
     echo "========================================="
-    echo "  TR Panel 管理脚本"
+    echo "  TR Panel 管理脚本 v${SCRIPT_VERSION}"
     echo "  https://github.com/ShourGG/tr-panel-go"
     echo "========================================="
     echo -e "服务状态: $STATUS"
     echo ""
+    
+    # 检查脚本更新
+    check_script_update
+    
     echo -e "${YELLOW}系统要求: Ubuntu 24+ (低版本可能出现 GLIBC 版本报错)${NC}"
     echo ""
     echo "————————————————————————————————————————"
