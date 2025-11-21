@@ -62,10 +62,19 @@ check_root() {
 # 显示菜单
 show_menu() {
     clear
+    
+    # 检查服务状态
+    if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
+        STATUS="${GREEN}● 运行中${NC}"
+    else
+        STATUS="${RED}○ 已停止${NC}"
+    fi
+    
     echo "========================================="
     echo "  TR Panel 管理脚本"
     echo "  https://github.com/ShourGG/tr-panel-go"
     echo "========================================="
+    echo -e "服务状态: $STATUS"
     echo ""
     echo -e "${YELLOW}系统要求: Ubuntu 24+ (低版本可能出现 GLIBC 版本报错)${NC}"
     echo ""
