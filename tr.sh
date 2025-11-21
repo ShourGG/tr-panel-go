@@ -202,10 +202,10 @@ force_update() {
 # 更新脚本
 update_script() {
     echo -e "${GREEN}更新脚本...${NC}"
-    cd ~ && rm -f install.sh
-    wget -O install.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/install.sh
-    chmod +x install.sh
-    echo -e "${GREEN}脚本已更新，请重新运行: ./install.sh${NC}"
+    cd ~ && rm -f tr.sh
+    wget -O tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh
+    chmod +x tr.sh
+    echo -e "${GREEN}脚本已更新，请重新运行: ./tr.sh${NC}"
     exit 0
 }
 
