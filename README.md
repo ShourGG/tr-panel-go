@@ -33,6 +33,26 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
+## 界面预览
+
+**登录界面**
+
+![登录页面](.github/login.png)
+
+**仪表盘**
+
+![仪表盘](.github/dashboard.png)
+
+**插件服务器管理**
+
+![插件服务器](.github/plugin-server.png)
+
+**安装脚本菜单**
+
+![脚本菜单](.github/script-menu.png)
+
+---
+
 ## 项目简介
 
 泰拉瑞亚游戏服务器管理后端，提供 RESTful API 和 WebSocket 实时通信，支持服务器监控、玩家管理、插件管理和自动化任务调度。
