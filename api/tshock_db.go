@@ -11,20 +11,11 @@ import (
 	_ "github.com/glebarez/go-sqlite"
 )
 func getTShockDBPath() string {
-	possiblePaths := []string{
-		filepath.Join(services.GetGlobalTShockDir(), "tshock.sqlite"),
-		filepath.Join(services.GetPluginServerDir(), "tshock", "tshock.sqlite"),
-		filepath.Join("data", "servers", "tshock", "tshock.sqlite"),
-		filepath.Join("servers", "tshock", "tshock.sqlite"),
-		filepath.Join("tshock", "tshock.sqlite"),
-		"tshock.sqlite",
+	storageType, dbPath, _, _ := getTShockStorageInfo()
+	if storageType == "sqlite" && dbPath != "" {
+		return dbPath
 	}
-	for _, path := range possiblePaths {
-		if fileExists(path) {
-			return path
-		}
-	}
-	return possiblePaths[0]
+	return filepath.Join(services.GetGlobalTShockDir(), "tshock.sqlite")
 }
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
@@ -83,15 +74,8 @@ type TShockLog struct {
 	Date     string `json:"date"`
 }
 func GetTShockUsers(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "无法打开TShock数据库",
-			"error":   err.Error(),
-			"dbPath":  dbPath,
-		})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -116,16 +100,16 @@ func GetTShockUsers(c *gin.Context) {
 	}
 	var total int
 	countArgs := args
-	err = db.QueryRow(countQuery, countArgs...).Scan(&total)
+	err := db.QueryRow(countQuery, countArgs...).Scan(&total)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "查询失败: " + err.Error()})
 		return
 	}
 	query += " ORDER BY ID DESC LIMIT ? OFFSET ?"
 	args = append(args, pageSize, offset)
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "查询失败: " + err.Error()})
 		return
 	}
 	defer rows.Close()
@@ -150,10 +134,8 @@ func GetTShockUsers(c *gin.Context) {
 	})
 }
 func GetTShockBans(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -178,16 +160,16 @@ func GetTShockBans(c *gin.Context) {
 	}
 	var total int
 	countArgs := args
-	err = db.QueryRow(countQuery, countArgs...).Scan(&total)
+	err := db.QueryRow(countQuery, countArgs...).Scan(&total)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"success": false, "code": "TSHOCK_DB_NOT_READY", "error": "查询失败: " + err.Error()})
 		return
 	}
 	query += " ORDER BY Date DESC LIMIT ? OFFSET ?"
 	args = append(args, pageSize, offset)
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"success": false, "code": "TSHOCK_DB_NOT_READY", "error": "查询失败: " + err.Error()})
 		return
 	}
 	defer rows.Close()
@@ -231,10 +213,8 @@ func GetTShockBans(c *gin.Context) {
 	})
 }
 func GetTShockRegions(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -271,10 +251,8 @@ func GetTShockRegions(c *gin.Context) {
 	})
 }
 func GetTShockWarps(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -309,10 +287,8 @@ func GetTShockWarps(c *gin.Context) {
 	})
 }
 func GetTShockLogs(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -330,7 +306,7 @@ func GetTShockLogs(c *gin.Context) {
 	}
 	var total int
 	countArgs := args
-	err = db.QueryRow(countQuery, countArgs...).Scan(&total)
+	err := db.QueryRow(countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
@@ -372,10 +348,8 @@ func GetTShockLogs(c *gin.Context) {
 	})
 }
 func UpdateTShockUser(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -388,7 +362,7 @@ func UpdateTShockUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
 		return
 	}
-	_, err = db.Exec("UPDATE Users SET UUID = ?, Usergroup = ? WHERE ID = ?", 
+	_, err := db.Exec("UPDATE Users SET UUID = ?, Usergroup = ? WHERE ID = ?",
 		req.UUID, req.Usergroup, req.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error()})
@@ -400,15 +374,13 @@ func UpdateTShockUser(c *gin.Context) {
 	})
 }
 func DeleteTShockUser(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
 	id := c.Param("id")
-	_, err = db.Exec("DELETE FROM Users WHERE ID = ?", id)
+	_, err := db.Exec("DELETE FROM Users WHERE ID = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
 		return
@@ -419,16 +391,14 @@ func DeleteTShockUser(c *gin.Context) {
 	})
 }
 func RemoveTShockBan(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
 	ticketNumber := c.Param("ticketNumber")
 	now := time.Now().Unix() * 10000000
-	_, err = db.Exec("UPDATE PlayerBans SET Expiration = ? WHERE TicketNumber = ?", now, ticketNumber)
+	_, err := db.Exec("UPDATE PlayerBans SET Expiration = ? WHERE TicketNumber = ?", now, ticketNumber)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "解封失败: " + err.Error()})
 		return
@@ -439,10 +409,8 @@ func RemoveTShockBan(c *gin.Context) {
 	})
 }
 func AddTShockBan(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法打开TShock数据库: " + err.Error()})
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
 		return
 	}
 	defer db.Close()
@@ -465,7 +433,7 @@ func AddTShockBan(c *gin.Context) {
 		expirationTime := now.Add(time.Duration(req.Duration) * time.Minute)
 		expirationTicks = int64(expirationTime.Unix() * 10000000) + 621355968000000000
 	}
-	_, err = db.Exec("INSERT INTO PlayerBans (Identifier, Reason, BanningUser, Date, Expiration) VALUES (?, ?, ?, ?, ?)",
+	_, err := db.Exec("INSERT INTO PlayerBans (Identifier, Reason, BanningUser, Date, Expiration) VALUES (?, ?, ?, ?, ?)",
 		req.Identifier, req.Reason, req.BanningUser, dateTicksSince1970, expirationTicks)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加封禁失败: " + err.Error()})
@@ -482,23 +450,39 @@ func ticksToTime(ticks int64) time.Time {
 	return time.Unix(unixSeconds, 0)
 }
 func GetTShockStats(c *gin.Context) {
-	dbPath := getTShockDBPath()
-	if !fileExists(dbPath) {
+	status := getTShockBootstrapStatus()
+	if status.StorageType != "sqlite" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "TShock数据库文件不存在",
-			"dbPath":  dbPath,
-			"hint":    "请先启动插件服，TShock会自动创建数据库文件",
+			"code":    "TSHOCK_DB_UNSUPPORTED_STORAGE",
+			"message": "当前数据库类型不是 SQLite，暂不支持可视化管理。",
+			"data": gin.H{
+				"bootstrap": status,
+			},
 		})
 		return
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	if !status.DBExists || !status.SchemaReady {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"code":    "TSHOCK_DB_NOT_READY",
+			"message": "TShock 数据库尚未初始化完成，请先完成插件服首次启动。",
+			"data": gin.H{
+				"bootstrap": status,
+			},
+		})
+		return
+	}
+	db, err := sql.Open("sqlite", status.DBPath)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "无法打开TShock数据库",
+			"code":    "TSHOCK_DB_OPEN_FAILED",
+			"message": "无法打开 TShock 数据库",
 			"error":   err.Error(),
-			"dbPath":  dbPath,
+			"data": gin.H{
+				"bootstrap": status,
+			},
 		})
 		return
 	}

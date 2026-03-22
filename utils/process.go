@@ -392,10 +392,11 @@ func StopProcess(roomID int) error {
 	return nil
 }
 func (p *Process) captureAdminToken(line string) {
-	re := regexp.MustCompile(`/setup\s+(\d+)`)
+	re := regexp.MustCompile(`(?i)/(?:setup|auth)\s+(\d+)`)
 	matches := re.FindStringSubmatch(line)
 	if len(matches) > 1 {
-		token := "/setup " + matches[1]
+		original := re.FindString(line)
+		token := strings.TrimSpace(original)
 		log.Printf("[INFO] 捕获到 TShock 管理员令牌: %s (房间 ID: %d)", token, p.roomID)
 		if p.logWriter != nil {
 			fmt.Fprintf(p.logWriter, "[ADMIN_TOKEN] %s\n", token)

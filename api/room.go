@@ -1,8 +1,10 @@
 package api
+
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
@@ -18,17 +20,20 @@ import (
 	"terraria-panel/storage"
 	"terraria-panel/utils"
 	"time"
-	"github.com/gin-gonic/gin"
 )
+
 var roomStorage storage.RoomStorage
+
 func SetRoomStorage(s storage.RoomStorage) {
 	roomStorage = s
 }
+
 type WorldInfo struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
 	Path   string `json:"path"`
 }
+
 func GetWorldsForRoom(c *gin.Context) {
 	serverType := c.Query("serverType")
 	var worldExt string
@@ -87,6 +92,55 @@ func GetWorldsForRoom(c *gin.Context) {
 		"data":    worlds,
 	})
 }
+
+func ImportWorld(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择要导入的世界文件"))
+		return
+	}
+
+	filename := filepath.Base(strings.TrimSpace(file.Filename))
+	if filename == "" || filename == "." {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("文件名不合法"))
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".wld" && ext != ".twld" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅支持导入 .wld 或 .twld 世界文件"))
+		return
+	}
+
+	sharedDir := filepath.Join(config.DataDir, "shared-worlds")
+	if err := os.MkdirAll(sharedDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建共享世界目录失败"))
+		return
+	}
+
+	targetPath := filepath.Join(sharedDir, filename)
+	if _, err := os.Stat(targetPath); err == nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("同名世界文件已存在"))
+		return
+	}
+
+	if err := c.SaveUploadedFile(file, targetPath); err != nil {
+		log.Printf("[ERROR] 导入世界失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存世界文件失败: "+err.Error()))
+		return
+	}
+
+	log.Printf("[INFO] 世界导入成功: %s -> %s", filename, targetPath)
+	c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Message: "世界导入成功",
+		Data: gin.H{
+			"name": filename,
+			"path": targetPath,
+		},
+	})
+}
+
 func GetRooms(c *gin.Context) {
 	rooms, err := roomStorage.GetAll()
 	if err != nil {

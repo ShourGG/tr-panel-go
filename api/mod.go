@@ -1,10 +1,12 @@
 package api
+
 import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
@@ -19,28 +21,216 @@ import (
 	"sync"
 	"terraria-panel/config"
 	"terraria-panel/models"
-	"github.com/gin-gonic/gin"
+	"time"
 )
+
 const (
 	STEAM_API_KEY    = "0CC4D444D75574B25716B13C2C95258B"
 	TMODLOADER_APPID = "1281930"
 )
+
 var (
-	downloadingMods  = make(map[string]bool)
-	downloadingMutex sync.RWMutex
+	downloadingMods     = make(map[string]bool)
+	modDownloadProgress = make(map[string]*models.DownloadProgress)
+	downloadingMutex    sync.RWMutex
 )
+
+type commandLogBuffer struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (b *commandLogBuffer) Add(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.lines = append(b.lines, line)
+	if len(b.lines) > 30 {
+		b.lines = b.lines[len(b.lines)-30:]
+	}
+}
+
+func (b *commandLogBuffer) LastRelevant() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := len(b.lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(b.lines[i])
+		if line == "" {
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") ||
+			strings.Contains(lower, "failed") ||
+			strings.Contains(lower, "failure") ||
+			strings.Contains(lower, "denied") ||
+			strings.Contains(lower, "timeout") ||
+			strings.Contains(lower, "not subscribed") ||
+			strings.Contains(lower, "no subscription") ||
+			strings.Contains(lower, "no connection") ||
+			strings.Contains(lower, "network") ||
+			strings.Contains(lower, "disk") ||
+			strings.Contains(lower, "login") ||
+			strings.Contains(lower, "workshop") ||
+			strings.Contains(lower, "0x") {
+			return line
+		}
+	}
+
+	if len(b.lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(b.lines[len(b.lines)-1])
+}
+
+func buildModDownloadError(base string, err error, buffers ...*commandLogBuffer) string {
+	parts := []string{strings.TrimSpace(base)}
+	if err != nil {
+		parts = append(parts, strings.TrimSpace(err.Error()))
+	}
+
+	for _, buffer := range buffers {
+		if buffer == nil {
+			continue
+		}
+		if reason := strings.TrimSpace(buffer.LastRelevant()); reason != "" {
+			duplicate := false
+			for _, existing := range parts {
+				if existing == reason {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				parts = append(parts, reason)
+			}
+			break
+		}
+	}
+
+	return strings.Join(parts, " | ")
+}
+
+func clampProgress(progress int) int {
+	if progress < 0 {
+		return 0
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}
+
+func updateModProgressState(workshopID, modName, status, message string, progress int) *models.DownloadProgress {
+	downloadingMutex.Lock()
+	defer downloadingMutex.Unlock()
+
+	item, exists := modDownloadProgress[workshopID]
+	if !exists {
+		item = &models.DownloadProgress{
+			ID:         workshopID,
+			PluginName: modName,
+			Status:     "downloading",
+			Progress:   0,
+			Message:    "准备下载...",
+			StartTime:  time.Now(),
+		}
+		modDownloadProgress[workshopID] = item
+	}
+
+	if modName != "" {
+		item.PluginName = modName
+	}
+	if status != "" {
+		item.Status = status
+	}
+	if message != "" {
+		item.Message = message
+	}
+	if progress >= 0 {
+		item.Progress = clampProgress(progress)
+	}
+
+	return &models.DownloadProgress{
+		ID:         item.ID,
+		PluginName: item.PluginName,
+		Status:     item.Status,
+		Progress:   item.Progress,
+		Message:    item.Message,
+		StartTime:  item.StartTime,
+	}
+}
+
+func parseModProgressMessage(message string) (string, int, string) {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return "downloading", -1, "下载中..."
+	}
+
+	if strings.Contains(msg, "下载失败") || strings.Contains(strings.ToLower(msg), "failed") || strings.Contains(strings.ToLower(msg), "error") {
+		return "failed", 0, msg
+	}
+
+	if msg == "Downloaded" {
+		return "completed", 100, "下载完成"
+	}
+
+	if strings.Contains(msg, "正在安装") {
+		return "installing", 92, msg
+	}
+
+	if strings.Contains(msg, "正在查找") || strings.Contains(msg, "查找下载的MOD文件") {
+		return "installing", 88, msg
+	}
+
+	if msg == "Downloading" {
+		return "downloading", 10, "正在连接 Steam 下载..."
+	}
+
+	re := regexp.MustCompile(`(\d{1,3})%`)
+	match := re.FindStringSubmatch(msg)
+	if len(match) > 1 {
+		percent, _ := strconv.Atoi(match[1])
+		mapped := 10 + int(float64(clampProgress(percent))*0.75)
+		return "downloading", mapped, fmt.Sprintf("正在下载 %d%%", clampProgress(percent))
+	}
+
+	return "downloading", -1, msg
+}
+
+func scheduleModProgressCleanup(workshopID string, delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		downloadingMutex.Lock()
+		delete(modDownloadProgress, workshopID)
+		downloadingMutex.Unlock()
+	}()
+}
+
 func BroadcastModProgress(workshopID, message string) {
 	log.Printf("[MOD进度] WorkshopID=%s, 消息=%s", workshopID, message)
+	status, progress, normalizedMessage := parseModProgressMessage(message)
+	item := updateModProgressState(workshopID, "", status, normalizedMessage, progress)
 	progressData := map[string]interface{}{
 		"type":       "mod_progress",
 		"workshopId": workshopID,
-		"message":    message,
+		"status":     item.Status,
+		"progress":   item.Progress,
+		"message":    item.Message,
+		"name":       item.PluginName,
 	}
 	jsonData, err := json.Marshal(progressData)
 	if err == nil {
 		BroadcastMessage(jsonData)
 	}
 }
+
 type ModMappingData struct {
 	ModName    string `json:"modName"`
 	PreviewURL string `json:"previewUrl,omitempty"`
@@ -50,6 +240,7 @@ type ModFileInfo struct {
 	Size    int64
 	Version string
 }
+
 func saveWorkshopMapping(workshopID, modName, previewURL string) {
 	mappingFile := filepath.Join(config.DataDir, "tModLoader", "workshop_mapping.json")
 	mapping := make(map[string]ModMappingData)
@@ -86,6 +277,7 @@ func loadWorkshopMapping() map[string]ModMappingData {
 	}
 	return mapping
 }
+
 type SteamWorkshopItem struct {
 	PublishedFileID string   `json:"publishedfileid"`
 	Title           string   `json:"title"`
@@ -97,6 +289,7 @@ type SteamWorkshopItem struct {
 	Subscriptions   int      `json:"subscriptions"`
 	Tags            []string `json:"tags"`
 }
+
 func GetMods(c *gin.Context) {
 	modDir := filepath.Join(config.DataDir, "tModLoader", "Mods")
 	enabledFile := filepath.Join(modDir, "enabled.json")
@@ -324,13 +517,28 @@ func SearchWorkshopMods(c *gin.Context) {
 func GetDownloadingMods(c *gin.Context) {
 	downloadingMutex.RLock()
 	defer downloadingMutex.RUnlock()
+
 	list := []string{}
 	for workshopID := range downloadingMods {
 		list = append(list, workshopID)
 	}
+
+	items := make([]models.DownloadProgress, 0, len(modDownloadProgress))
+	for _, item := range modDownloadProgress {
+		items = append(items, models.DownloadProgress{
+			ID:         item.ID,
+			PluginName: item.PluginName,
+			Status:     item.Status,
+			Progress:   item.Progress,
+			Message:    item.Message,
+			StartTime:  item.StartTime,
+		})
+	}
+
 	log.Printf("📋 查询下载状态: 当前 %d 个MOD正在下载 %v", len(list), list)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"downloading": list,
+		"items":       items,
 	}))
 }
 func InstallMod(c *gin.Context) {
@@ -349,6 +557,7 @@ func InstallMod(c *gin.Context) {
 		downloadingMutex.Lock()
 		downloadingMods[req.WorkshopID] = true
 		downloadingMutex.Unlock()
+		updateModProgressState(req.WorkshopID, req.Name, "downloading", "准备下载...", 0)
 		log.Printf("📝 已添加到下载列表: %s (当前下载数: %d)", req.WorkshopID, len(downloadingMods))
 		defer func() {
 			downloadingMutex.Lock()
@@ -360,7 +569,8 @@ func InstallMod(c *gin.Context) {
 			if r := recover(); r != nil {
 				log.Printf("❌ 完蛋，panic了: %v", r)
 				debug.PrintStack()
-				BroadcastModProgress(req.WorkshopID, "下载失败")
+				BroadcastModProgress(req.WorkshopID, "下载失败: "+buildModDownloadError("下载任务异常崩溃", fmt.Errorf("%v", r)))
+				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			}
 		}()
 		modDir := filepath.Join(config.DataDir, "tModLoader", "Mods")
@@ -370,8 +580,9 @@ func InstallMod(c *gin.Context) {
 		if runtime.GOOS == "windows" {
 			steamcmdPath = filepath.Join(config.DataDir, "steamcmd", "steamcmd.exe")
 		}
-		if _, err := os.Stat(steamcmdPath); os.IsNotExist(err) {
-			log.Printf("SteamCMD不存在，先安装...")
+		_, steamcmdReady, _, _, steamcmdStateMessage := getSteamCMDState()
+		if !steamcmdReady {
+			log.Printf("SteamCMD 不可用，开始安装/修复: %s", steamcmdStateMessage)
 			if err := installSteamCMD(); err != nil {
 				errMsg := fmt.Sprintf("SteamCMD安装失败: %v", err)
 				if runtime.GOOS == "linux" {
@@ -379,15 +590,17 @@ func InstallMod(c *gin.Context) {
 				}
 				log.Printf("❌ %s", errMsg)
 				BroadcastModProgress(req.WorkshopID, "下载失败: "+errMsg)
+				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 				return
 			}
 		}
 		if runtime.GOOS == "linux" {
 			depCheckCmd := exec.Command("dpkg", "-l", "lib32gcc-s1")
 			if err := depCheckCmd.Run(); err != nil {
-				errMsg := "Fuck，缺32位库。运行这个：\nsudo dpkg --add-architecture i386\nsudo apt-get update\nsudo apt-get install lib32gcc-s1 lib32stdc++6"
+				errMsg := "缺少 32 位运行库，请先执行：\nsudo dpkg --add-architecture i386\nsudo apt-get update\nsudo apt-get install lib32gcc-s1 lib32stdc++6"
 				log.Printf("❌ %s", errMsg)
 				BroadcastModProgress(req.WorkshopID, "下载失败: "+errMsg)
+				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 				return
 			}
 		}
@@ -404,21 +617,26 @@ func InstallMod(c *gin.Context) {
 			"+workshop_download_item", "1281930", req.WorkshopID,
 			"+quit",
 		)
+		stdoutLog := &commandLogBuffer{}
+		stderrLog := &commandLogBuffer{}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			log.Printf("❌ 创建输出管道失败: %v", err)
-			BroadcastModProgress(req.WorkshopID, "下载失败")
+			BroadcastModProgress(req.WorkshopID, "下载失败: "+buildModDownloadError("创建 SteamCMD 输出管道失败", err))
+			scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			return
 		}
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
 			log.Printf("❌ 创建错误管道失败: %v", err)
-			BroadcastModProgress(req.WorkshopID, "下载失败")
+			BroadcastModProgress(req.WorkshopID, "下载失败: "+buildModDownloadError("创建 SteamCMD 错误管道失败", err))
+			scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			return
 		}
 		if err := cmd.Start(); err != nil {
 			log.Printf("❌ 启动 SteamCMD 失败: %v", err)
-			BroadcastModProgress(req.WorkshopID, "下载失败")
+			BroadcastModProgress(req.WorkshopID, "下载失败: "+buildModDownloadError("启动 SteamCMD 失败", err))
+			scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			return
 		}
 		log.Printf("🚀 开始下载 MOD (WorkshopID: %s)", req.WorkshopID)
@@ -427,6 +645,7 @@ func InstallMod(c *gin.Context) {
 			scanner := bufio.NewScanner(stdout)
 			for scanner.Scan() {
 				line := scanner.Text()
+				stdoutLog.Add(line)
 				log.Printf("SteamCMD: %s", line)
 				if strings.Contains(line, "Downloading item") {
 					log.Printf("📥 SteamCMD开始下载Workshop ID: %s", req.WorkshopID)
@@ -444,17 +663,21 @@ func InstallMod(c *gin.Context) {
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
 				line := scanner.Text()
+				stderrLog.Add(line)
 				log.Printf("SteamCMD (stderr): %s", line)
 			}
 		}()
 		log.Printf("⏳ 等待 SteamCMD 完成...")
 		if err := cmd.Wait(); err != nil {
 			log.Printf("❌ SteamCMD 执行失败: %v", err)
-			BroadcastModProgress(req.WorkshopID, "下载失败")
+			BroadcastModProgress(req.WorkshopID, "下载失败: "+buildModDownloadError("SteamCMD 执行失败", err, stderrLog, stdoutLog))
+			scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			return
 		}
 		log.Printf("✅ SteamCMD 命令执行完成")
 		log.Printf("🔍 开始查找下载的MOD文件...")
+		updateModProgressState(req.WorkshopID, req.Name, "installing", "正在查找模组文件...", 88)
+		BroadcastModProgress(req.WorkshopID, "正在查找模组文件...")
 		foundMod := false
 		for _, workshopDir := range workshopDirs {
 			if _, err := os.Stat(workshopDir); err == nil {
@@ -498,25 +721,28 @@ func InstallMod(c *gin.Context) {
 				}
 				log.Printf("✅ 复制成功")
 				foundMod = true
-			modName := extractModName(fileName)
-			log.Printf("📝 提取的模组名称: %s (原文件名: %s)", modName, fileName)
-			log.Printf("启用MOD: %s", modName)
-			if err := enableModByName(modName); err != nil {
-				log.Printf("⚠️ 启用MOD失败: %v", err)
+				updateModProgressState(req.WorkshopID, req.Name, "installing", "正在安装模组文件...", 95)
+				BroadcastModProgress(req.WorkshopID, "下载完成，正在安装...")
+				modName := extractModName(fileName)
+				log.Printf("📝 提取的模组名称: %s (原文件名: %s)", modName, fileName)
+				log.Printf("启用MOD: %s", modName)
+				if err := enableModByName(modName); err != nil {
+					log.Printf("⚠️ 启用MOD失败: %v", err)
+				}
+				fileNameWithoutExt := strings.TrimSuffix(fileName, ".tmod")
+				log.Printf("💾 保存映射: WorkshopID=%s → FileName=%s, ModName=%s, PreviewURL=%s",
+					req.WorkshopID, fileNameWithoutExt, modName, req.PreviewURL)
+				saveWorkshopMapping(req.WorkshopID, fileNameWithoutExt, req.PreviewURL)
+				log.Printf("✅ MOD %s 下载并安装成功 (文件: %s, 模组名: %s, WorkshopID: %s)",
+					req.Name, fileName, modName, req.WorkshopID)
+				BroadcastModProgress(req.WorkshopID, "Downloaded")
+				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
+				return
 			}
-			fileNameWithoutExt := strings.TrimSuffix(fileName, ".tmod")
-			log.Printf("💾 保存映射: WorkshopID=%s → FileName=%s, ModName=%s, PreviewURL=%s",
-				req.WorkshopID, fileNameWithoutExt, modName, req.PreviewURL)
-			saveWorkshopMapping(req.WorkshopID, fileNameWithoutExt, req.PreviewURL)
-			log.Printf("✅ MOD %s 下载并安装成功 (文件: %s, 模组名: %s, WorkshopID: %s)",
-				req.Name, fileName, modName, req.WorkshopID)
-			BroadcastModProgress(req.WorkshopID, "Downloaded")
-			return
+			if foundMod {
+				break
+			}
 		}
-		if foundMod {
-			break
-		}
-	}
 		if !foundMod {
 			log.Printf("Workshop 下载目录未找到 MOD，尝试从本地 Steam 目录查找...")
 			workshopDirs := []string{
@@ -539,6 +765,7 @@ func InstallMod(c *gin.Context) {
 									enableModByName(modName)
 									BroadcastModProgress(req.WorkshopID, "Downloaded")
 									log.Printf("✅ MOD %s 安装成功", req.Name)
+									scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 									return
 								}
 							}
@@ -550,6 +777,7 @@ func InstallMod(c *gin.Context) {
 		if !foundMod {
 			log.Printf("❌ 未找到 MOD 文件: %s", req.Name)
 			BroadcastModProgress(req.WorkshopID, "下载失败: 未找到 MOD 文件")
+			scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
 			return
 		}
 	}()
@@ -804,8 +1032,13 @@ func UploadMod(c *gin.Context) {
 }
 func installSteamCMD() error {
 	steamcmdDir := filepath.Join(config.DataDir, "steamcmd")
-	os.MkdirAll(steamcmdDir, 0755)
+	if err := os.MkdirAll(steamcmdDir, 0755); err != nil {
+		return fmt.Errorf("创建 SteamCMD 目录失败: %v", err)
+	}
 	if runtime.GOOS == "linux" {
+		for _, name := range []string{"linux32", "linux64", "package", "steamcmd.sh", "steam.sh", "steam", "steamerrorreporter", "steamerrorreporter64"} {
+			_ = os.RemoveAll(filepath.Join(steamcmdDir, name))
+		}
 		steamcmdURL := "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
 		tarPath := filepath.Join(steamcmdDir, "steamcmd_linux.tar.gz")
 		log.Printf("下载 SteamCMD: %s", steamcmdURL)
@@ -814,6 +1047,9 @@ func installSteamCMD() error {
 			return fmt.Errorf("下载 SteamCMD 失败: %v", err)
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("下载 SteamCMD 失败: HTTP %d", resp.StatusCode)
+		}
 		out, err := os.Create(tarPath)
 		if err != nil {
 			return fmt.Errorf("创建文件失败: %v", err)
@@ -845,10 +1081,23 @@ func installSteamCMD() error {
 			}
 			path := filepath.Join(steamcmdDir, header.Name)
 			if header.Typeflag == tar.TypeDir {
-				os.MkdirAll(path, 0755)
+				dirMode := header.FileInfo().Mode().Perm()
+				if dirMode == 0 {
+					dirMode = 0755
+				}
+				if err := os.MkdirAll(path, dirMode); err != nil {
+					return fmt.Errorf("创建目录失败: %v", err)
+				}
 				continue
 			}
-			file, err := os.Create(path)
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				return fmt.Errorf("创建父目录失败: %v", err)
+			}
+			fileMode := header.FileInfo().Mode().Perm()
+			if fileMode == 0 {
+				fileMode = 0644
+			}
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
 			if err != nil {
 				return fmt.Errorf("创建文件失败: %v", err)
 			}
@@ -857,16 +1106,45 @@ func installSteamCMD() error {
 			if err != nil {
 				return fmt.Errorf("解压文件失败: %v", err)
 			}
-			if strings.HasSuffix(header.Name, ".sh") || header.Name == "steamcmd" {
-				os.Chmod(path, 0755)
+			if err := os.Chmod(path, fileMode); err != nil {
+				log.Printf("⚠️ 设置文件权限失败 %s: %v", path, err)
+			}
+			if strings.HasSuffix(header.Name, ".sh") ||
+				header.Name == "steamcmd" ||
+				strings.HasSuffix(header.Name, "/steamcmd") ||
+				strings.Contains(header.Name, "linux32/steamcmd") ||
+				strings.Contains(header.Name, "linux64/steamcmd") {
+				if err := os.Chmod(path, 0755); err != nil {
+					log.Printf("⚠️ 设置可执行权限失败 %s: %v", path, err)
+				}
 			}
 		}
 		os.Remove(tarPath)
+		linuxRuntimePath := filepath.Join(steamcmdDir, "linux32", "steamcmd")
+		if _, err := os.Stat(linuxRuntimePath); err != nil {
+			return fmt.Errorf("解压不完整，缺少运行文件: %s", linuxRuntimePath)
+		}
+		if err := os.Chmod(filepath.Join(steamcmdDir, "steamcmd.sh"), 0755); err != nil {
+			log.Printf("⚠️ 设置 steamcmd.sh 权限失败: %v", err)
+		}
+		if err := os.Chmod(linuxRuntimePath, 0755); err != nil {
+			log.Printf("⚠️ 设置 linux32/steamcmd 权限失败: %v", err)
+		}
 		log.Printf("初始化 SteamCMD...")
 		steamcmdPath := filepath.Join(steamcmdDir, "steamcmd.sh")
 		cmd := exec.Command(steamcmdPath, "+quit")
-		cmd.Run()
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			errMsg := strings.TrimSpace(string(output))
+			if errMsg != "" {
+				return fmt.Errorf("初始化 SteamCMD 失败: %v | %s", err, errMsg)
+			}
+			return fmt.Errorf("初始化 SteamCMD 失败: %v", err)
+		}
 	} else if runtime.GOOS == "windows" {
+		for _, name := range []string{"steamcmd.exe", "steam.dll", "steamerrorreporter.exe", "steamerrorreporter64.exe", "Steam.dll"} {
+			_ = os.RemoveAll(filepath.Join(steamcmdDir, name))
+		}
 		steamcmdURL := "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 		zipPath := filepath.Join(steamcmdDir, "steamcmd.zip")
 		log.Printf("下载 SteamCMD: %s", steamcmdURL)
@@ -875,6 +1153,9 @@ func installSteamCMD() error {
 			return fmt.Errorf("下载 SteamCMD 失败: %v", err)
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("下载 SteamCMD 失败: HTTP %d", resp.StatusCode)
+		}
 		out, err := os.Create(zipPath)
 		if err != nil {
 			return fmt.Errorf("创建文件失败: %v", err)
@@ -893,7 +1174,14 @@ func installSteamCMD() error {
 		log.Printf("初始化 SteamCMD...")
 		steamcmdPath := filepath.Join(steamcmdDir, "steamcmd.exe")
 		cmd = exec.Command(steamcmdPath, "+quit")
-		cmd.Run()
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			errMsg := strings.TrimSpace(string(output))
+			if errMsg != "" {
+				return fmt.Errorf("初始化 SteamCMD 失败: %v | %s", err, errMsg)
+			}
+			return fmt.Errorf("初始化 SteamCMD 失败: %v", err)
+		}
 	} else {
 		return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
 	}

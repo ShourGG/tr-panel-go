@@ -1,6 +1,7 @@
 # 编译输出
 dist/
 *.exe
+terraria-panel
 
 # 开发环境
 .env

@@ -1,17 +1,20 @@
 package api
+
 import (
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"sync"
 	wshandler "terraria-panel/websocket"
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 )
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return isOriginAllowed(r.Header.Get("Origin"))
 	},
 }
+
 type WebSocketManager struct {
 	clients    map[*websocket.Conn]bool
 	broadcast  chan []byte
@@ -19,12 +22,14 @@ type WebSocketManager struct {
 	unregister chan *websocket.Conn
 	mu         sync.RWMutex
 }
+
 var wsManager = &WebSocketManager{
 	clients:    make(map[*websocket.Conn]bool),
 	broadcast:  make(chan []byte, 256),
 	register:   make(chan *websocket.Conn),
 	unregister: make(chan *websocket.Conn),
 }
+
 func (manager *WebSocketManager) Run() {
 	for {
 		select {

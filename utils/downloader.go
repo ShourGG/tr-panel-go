@@ -1,5 +1,6 @@
 package utils
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +79,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	totalSize := resp.ContentLength
 	if totalSize > 0 {
 		fmt.Printf("📦 File size: %.2f MB\n", float64(totalSize)/1024/1024)
@@ -143,7 +145,60 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 	avgSpeed := float64(downloaded) / elapsed / 1024 / 1024
 	fmt.Printf("✅ Download complete! Total: %.2f MB, Time: %.1fs, Avg Speed: %.2f MB/s\n",
 		float64(downloaded)/1024/1024, elapsed, avgSpeed)
+	if err := validateDownloadedFile(filepath, contentType); err != nil {
+		_ = os.Remove(filepath)
+		return fmt.Errorf("downloaded content validation failed: %v", err)
+	}
 	return nil
+}
+
+func validateDownloadedFile(filepath string, contentType string) error {
+	file, err := os.Open(filepath)
+	if err != nil {
+		return fmt.Errorf("open file failed: %v", err)
+	}
+	defer file.Close()
+
+	header := make([]byte, 512)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read file header failed: %v", err)
+	}
+	header = header[:n]
+
+	if looksLikeHTML(header) {
+		return fmt.Errorf("received HTML instead of archive/binary (content-type: %s, preview: %q)", contentType, sanitizePreview(header))
+	}
+	if looksLikeJSON(contentType, header) {
+		return fmt.Errorf("received JSON instead of archive/binary (content-type: %s, preview: %q)", contentType, sanitizePreview(header))
+	}
+	return nil
+}
+
+func looksLikeHTML(data []byte) bool {
+	trimmed := bytes.TrimSpace(bytes.ToLower(data))
+	return bytes.HasPrefix(trimmed, []byte("<!doctype html")) ||
+		bytes.HasPrefix(trimmed, []byte("<html")) ||
+		bytes.HasPrefix(trimmed, []byte("<head")) ||
+		bytes.HasPrefix(trimmed, []byte("<body"))
+}
+
+func looksLikeJSON(contentType string, data []byte) bool {
+	trimmed := bytes.TrimSpace(data)
+	if strings.Contains(contentType, "application/json") {
+		return true
+	}
+	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
+}
+
+func sanitizePreview(data []byte) string {
+	preview := string(bytes.TrimSpace(data))
+	preview = strings.ReplaceAll(preview, "\n", " ")
+	preview = strings.ReplaceAll(preview, "\r", " ")
+	if len(preview) > 120 {
+		preview = preview[:120] + "..."
+	}
+	return preview
 }
 func GetDownloadConfig(cfg *config.Config, url string, filepath string, onProgress func(int)) DownloadOptions {
 	return DownloadOptions{

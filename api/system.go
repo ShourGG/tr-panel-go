@@ -1,29 +1,54 @@
 package api
+
 import (
 	"bufio"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"terraria-panel/config"
 	"terraria-panel/models"
+	"terraria-panel/utils"
 	"time"
+
 	"github.com/gin-gonic/gin"
 )
+
 var (
-	cachedCPU       float64
-	cachedMemory    float64
-	lastUpdateTime  time.Time
-	resourceMutex   sync.RWMutex
-	cacheExpiration = 5 * time.Second
-	isUpdating      bool
-	lastCPUIdle  uint64
-	lastCPUTotal uint64
+	cachedCPU             float64
+	cachedMemory          float64
+	cachedUploadSpeed     uint64
+	cachedDownloadSpeed   uint64
+	lastUpdateTime        time.Time
+	resourceMutex         sync.RWMutex
+	cacheExpiration       = 5 * time.Second
+	isUpdating            bool
+	lastCPUIdle           uint64
+	lastCPUTotal          uint64
+	lastNetworkRXBytes    uint64
+	lastNetworkTXBytes    uint64
+	lastNetworkSampleTime time.Time
+	panelStartedAt        = time.Now().UTC()
 )
+
 func InitSystemMonitoring() {
-	calculateCPUUsageIncremental()
+	updateSystemResources()
+
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			updateSystemResources()
+		}
+	}()
 }
+
 func updateSystemResources() {
 	resourceMutex.Lock()
 	if isUpdating {
@@ -32,135 +57,107 @@ func updateSystemResources() {
 	}
 	isUpdating = true
 	resourceMutex.Unlock()
+
 	defer func() {
 		resourceMutex.Lock()
 		isUpdating = false
 		resourceMutex.Unlock()
 	}()
+
 	cpuUsage := calculateCPUUsageIncremental()
+	if lastUpdateTime.IsZero() && cpuUsage == 0 {
+		time.Sleep(200 * time.Millisecond)
+		cpuUsage = calculateCPUUsageIncremental()
+	}
+
 	memUsage := calculateMemoryUsage()
+	uploadSpeed, downloadSpeed := calculateNetworkSpeeds()
+
 	resourceMutex.Lock()
 	cachedCPU = cpuUsage
 	cachedMemory = memUsage
+	cachedUploadSpeed = uploadSpeed
+	cachedDownloadSpeed = downloadSpeed
 	lastUpdateTime = time.Now()
 	resourceMutex.Unlock()
 }
+
+func ensureSystemResourcesFresh() {
+	resourceMutex.RLock()
+	needsUpdate := lastUpdateTime.IsZero() || time.Since(lastUpdateTime) > cacheExpiration
+	resourceMutex.RUnlock()
+	if needsUpdate {
+		updateSystemResources()
+	}
+}
+
 func calculateCPUUsageIncremental() float64 {
 	file, err := os.Open("/proc/stat")
 	if err != nil {
 		return cachedCPU
 	}
 	defer file.Close()
+
 	scanner := bufio.NewScanner(file)
 	if !scanner.Scan() {
 		return cachedCPU
 	}
-	line := scanner.Text()
-	fields := strings.Fields(line)
+
+	fields := strings.Fields(scanner.Text())
 	if len(fields) < 5 {
 		return cachedCPU
 	}
+
 	idle, _ := strconv.ParseUint(fields[4], 10, 64)
 	total := uint64(0)
 	for i := 1; i < len(fields); i++ {
 		val, _ := strconv.ParseUint(fields[i], 10, 64)
 		total += val
 	}
+
 	if lastCPUTotal == 0 {
 		lastCPUIdle = idle
 		lastCPUTotal = total
 		return 0
 	}
+
 	idleDelta := float64(idle - lastCPUIdle)
 	totalDelta := float64(total - lastCPUTotal)
+
 	lastCPUIdle = idle
 	lastCPUTotal = total
+
 	if totalDelta == 0 {
 		return cachedCPU
 	}
+
 	usage := (1.0 - idleDelta/totalDelta) * 100.0
 	if usage < 0 {
-		usage = 0
+		return 0
 	}
 	if usage > 100 {
-		usage = 100
+		return 100
 	}
 	return usage
 }
-func calculateCPUUsage() float64 {
-	file1, err := os.Open("/proc/stat")
-	if err != nil {
-		return 0
-	}
-	scanner1 := bufio.NewScanner(file1)
-	if !scanner1.Scan() {
-		file1.Close()
-		return 0
-	}
-	line1 := scanner1.Text()
-	file1.Close()
-	fields1 := strings.Fields(line1)
-	if len(fields1) < 5 {
-		return 0
-	}
-	idle1, _ := strconv.ParseUint(fields1[4], 10, 64)
-	total1 := uint64(0)
-	for i := 1; i < len(fields1); i++ {
-		val, _ := strconv.ParseUint(fields1[i], 10, 64)
-		total1 += val
-	}
-	time.Sleep(1 * time.Second)
-	file2, err := os.Open("/proc/stat")
-	if err != nil {
-		return 0
-	}
-	scanner2 := bufio.NewScanner(file2)
-	if !scanner2.Scan() {
-		file2.Close()
-		return 0
-	}
-	line2 := scanner2.Text()
-	file2.Close()
-	fields2 := strings.Fields(line2)
-	if len(fields2) < 5 {
-		return 0
-	}
-	idle2, _ := strconv.ParseUint(fields2[4], 10, 64)
-	total2 := uint64(0)
-	for i := 1; i < len(fields2); i++ {
-		val, _ := strconv.ParseUint(fields2[i], 10, 64)
-		total2 += val
-	}
-	idleDelta := float64(idle2 - idle1)
-	totalDelta := float64(total2 - total1)
-	if totalDelta == 0 {
-		return 0
-	}
-	usage := (1.0 - idleDelta/totalDelta) * 100.0
-	return usage
-}
-func getCPUUsage() float64 {
-	resourceMutex.RLock()
-	defer resourceMutex.RUnlock()
-	if time.Since(lastUpdateTime) > cacheExpiration {
-		go updateSystemResources()
-	}
-	return cachedCPU
-}
-func calculateMemoryUsage() float64 {
+
+func readMemInfo() (uint64, uint64) {
 	file, err := os.Open("/proc/meminfo")
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	defer file.Close()
-	var memTotal, memAvailable uint64
+
+	var memTotal uint64
+	var memAvailable uint64
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
+		fields := strings.Fields(scanner.Text())
 		if len(fields) < 2 {
 			continue
 		}
+
 		switch fields[0] {
 		case "MemTotal:":
 			memTotal, _ = strconv.ParseUint(fields[1], 10, 64)
@@ -168,78 +165,427 @@ func calculateMemoryUsage() float64 {
 			memAvailable, _ = strconv.ParseUint(fields[1], 10, 64)
 		}
 	}
+
+	return memTotal * 1024, memAvailable * 1024
+}
+
+func calculateMemoryUsage() float64 {
+	memTotal, memAvailable := readMemInfo()
 	if memTotal == 0 {
 		return 0
 	}
+
 	usage := (1.0 - float64(memAvailable)/float64(memTotal)) * 100.0
+	if usage < 0 {
+		return 0
+	}
+	if usage > 100 {
+		return 100
+	}
 	return usage
 }
-func getMemoryUsage() float64 {
+
+func readNetworkTotals() (uint64, uint64) {
+	file, err := os.Open("/proc/net/dev")
+	if err != nil {
+		return 0, 0
+	}
+	defer file.Close()
+
+	var rxBytes uint64
+	var txBytes uint64
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.Contains(line, ":") {
+			continue
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		iface := strings.TrimSpace(parts[0])
+		if iface == "lo" {
+			continue
+		}
+
+		fields := strings.Fields(parts[1])
+		if len(fields) < 16 {
+			continue
+		}
+
+		rx, _ := strconv.ParseUint(fields[0], 10, 64)
+		tx, _ := strconv.ParseUint(fields[8], 10, 64)
+		rxBytes += rx
+		txBytes += tx
+	}
+
+	return rxBytes, txBytes
+}
+
+func calculateNetworkSpeeds() (uint64, uint64) {
+	now := time.Now()
+	rxBytes, txBytes := readNetworkTotals()
+
+	if lastNetworkSampleTime.IsZero() {
+		lastNetworkRXBytes = rxBytes
+		lastNetworkTXBytes = txBytes
+		lastNetworkSampleTime = now
+		return 0, 0
+	}
+
+	elapsed := now.Sub(lastNetworkSampleTime).Seconds()
+	if elapsed <= 0 {
+		return cachedUploadSpeed, cachedDownloadSpeed
+	}
+
+	var downloadSpeed uint64
+	var uploadSpeed uint64
+
+	if rxBytes >= lastNetworkRXBytes {
+		downloadSpeed = uint64(float64(rxBytes-lastNetworkRXBytes) / elapsed)
+	}
+	if txBytes >= lastNetworkTXBytes {
+		uploadSpeed = uint64(float64(txBytes-lastNetworkTXBytes) / elapsed)
+	}
+
+	lastNetworkRXBytes = rxBytes
+	lastNetworkTXBytes = txBytes
+	lastNetworkSampleTime = now
+
+	return uploadSpeed, downloadSpeed
+}
+
+func getCPUUsage() float64 {
+	ensureSystemResourcesFresh()
 	resourceMutex.RLock()
 	defer resourceMutex.RUnlock()
-	if time.Since(lastUpdateTime) > cacheExpiration {
-		go updateSystemResources()
-	}
+	return cachedCPU
+}
+
+func getMemoryUsage() float64 {
+	ensureSystemResourcesFresh()
+	resourceMutex.RLock()
+	defer resourceMutex.RUnlock()
 	return cachedMemory
 }
+
+func getNetworkSpeeds() (uint64, uint64) {
+	ensureSystemResourcesFresh()
+	resourceMutex.RLock()
+	defer resourceMutex.RUnlock()
+	return cachedUploadSpeed, cachedDownloadSpeed
+}
+
 func getOSInfo() string {
 	osInfo := runtime.GOOS
-	if runtime.GOOS == "linux" {
-		file, err := os.Open("/etc/os-release")
-		if err == nil {
-			defer file.Close()
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if strings.HasPrefix(line, "PRETTY_NAME=") {
-					osInfo = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-					break
+	if runtime.GOOS != "linux" {
+		return osInfo
+	}
+
+	file, err := os.Open("/etc/os-release")
+	if err != nil {
+		return osInfo
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PRETTY_NAME=") {
+			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+		}
+	}
+
+	return osInfo
+}
+
+func getCPUModel() string {
+	file, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return runtime.GOARCH
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "model name") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	return runtime.GOARCH
+}
+
+func getSystemUptimeSeconds() int {
+	file, err := os.Open("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		return 0
+	}
+
+	fields := strings.Fields(scanner.Text())
+	if len(fields) == 0 {
+		return 0
+	}
+
+	uptime, _ := strconv.ParseFloat(fields[0], 64)
+	return int(uptime)
+}
+
+func getHostnameAndIPs() (string, []string) {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "-"
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return hostname, []string{}
+	}
+
+	localIPs := []string{}
+	seen := make(map[string]struct{})
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP == nil {
+				continue
+			}
+
+			ip := ipNet.IP.To4()
+			if ip == nil {
+				continue
+			}
+
+			ipText := ip.String()
+			if _, exists := seen[ipText]; exists {
+				continue
+			}
+			seen[ipText] = struct{}{}
+			localIPs = append(localIPs, ipText)
+		}
+	}
+
+	return hostname, localIPs
+}
+
+func getConfiguredPublicIP() string {
+	if ip := strings.TrimSpace(os.Getenv("SERVER_IP")); ip != "" {
+		return ip
+	}
+	return "-"
+}
+
+func getDiskInfo() ([]gin.H, float64) {
+	cmd := exec.Command("df", "-B1", "-P")
+	output, err := cmd.Output()
+	if err != nil {
+		return []gin.H{}, 0
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) <= 1 {
+		return []gin.H{}, 0
+	}
+
+	disks := make([]gin.H, 0, len(lines)-1)
+	rootUsage := 0.0
+
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+
+		mount := fields[len(fields)-1]
+		if mount == "/snap" || strings.HasPrefix(mount, "/snap/") {
+			continue
+		}
+
+		total, err1 := strconv.ParseUint(fields[1], 10, 64)
+		used, err2 := strconv.ParseUint(fields[2], 10, 64)
+		avail, err3 := strconv.ParseUint(fields[3], 10, 64)
+		if err1 != nil || err2 != nil || err3 != nil || total == 0 {
+			continue
+		}
+
+		usedPercent := float64(used) / float64(total) * 100
+		disks = append(disks, gin.H{
+			"filesystem":  fields[0],
+			"mount":       mount,
+			"total":       total,
+			"used":        used,
+			"free":        avail,
+			"usedPercent": usedPercent,
+		})
+
+		if mount == "/" {
+			rootUsage = usedPercent
+		}
+	}
+
+	if rootUsage == 0 && len(disks) > 0 {
+		if percent, ok := disks[0]["usedPercent"].(float64); ok {
+			rootUsage = percent
+		}
+	}
+
+	return disks, rootUsage
+}
+
+func getPanelVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "开发版"
+	}
+	return info.Main.Version
+}
+
+func getTerrariaVersion(serverType string) string {
+	switch serverType {
+	case "vanilla", "tshock":
+		return "1.4.4.9"
+	case "tmodloader":
+		return "按当前 tModLoader 安装版本"
+	default:
+		return "-"
+	}
+}
+
+func getServerRuntimeInfo() gin.H {
+	result := gin.H{
+		"hasRunningServer": false,
+		"runningRoomCount": 0,
+		"serverUptime":     0,
+		"terrariaVersion":  "-",
+		"serverType":       "-",
+		"gamePort":         0,
+		"roomName":         "-",
+		"roomId":           0,
+	}
+
+	if roomStorage == nil {
+		return result
+	}
+
+	rooms, err := roomStorage.GetAll()
+	if err != nil {
+		return result
+	}
+
+	runningRooms := 0
+	var selectedRoomID int
+	var selectedRoomName string
+	var selectedServerType string
+	var selectedGamePort int
+	var selectedServerUptime int
+
+	for _, room := range rooms {
+		if p, exists := utils.GetProcess(room.ID); exists && p.IsRunning() {
+			runningRooms++
+
+			if room.Status != "running" || room.PID != p.GetPID() {
+				_ = roomStorage.UpdateStatus(room.ID, "running", p.GetPID())
+			}
+
+			if selectedRoomID == 0 {
+				selectedRoomID = room.ID
+				selectedRoomName = room.Name
+				selectedServerType = room.ServerType
+				selectedGamePort = room.Port
+
+				if room.StartTime != nil {
+					seconds := int(time.Since(*room.StartTime).Seconds())
+					if seconds > 0 {
+						selectedServerUptime = seconds
+					}
 				}
 			}
 		}
 	}
-	return osInfo
+
+	if runningRooms == 0 {
+		return result
+	}
+
+	result["hasRunningServer"] = true
+	result["runningRoomCount"] = runningRooms
+	result["serverUptime"] = selectedServerUptime
+	result["terrariaVersion"] = getTerrariaVersion(selectedServerType)
+	result["serverType"] = selectedServerType
+	result["gamePort"] = selectedGamePort
+	result["roomName"] = selectedRoomName
+	result["roomId"] = selectedRoomID
+
+	return result
 }
+
 func GetSystemInfo(c *gin.Context) {
 	cpuUsage := getCPUUsage()
 	memUsage := getMemoryUsage()
+	memTotal, memAvailable := readMemInfo()
+	systemUptime := getSystemUptimeSeconds()
+	hostname, localIPs := getHostnameAndIPs()
+	uploadSpeed, downloadSpeed := getNetworkSpeeds()
+	disks, diskUsage := getDiskInfo()
+	serverInfo := getServerRuntimeInfo()
+	cfg := config.Load()
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	var totalMemory uint64
-	file, err := os.Open("/proc/meminfo")
-	if err == nil {
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[0] == "MemTotal:" {
-				totalMemory, _ = strconv.ParseUint(fields[1], 10, 64)
-				break
-			}
-		}
-		file.Close()
-	}
-	var uptime float64
-	uptimeFile, err := os.Open("/proc/uptime")
-	if err == nil {
-		scanner := bufio.NewScanner(uptimeFile)
-		if scanner.Scan() {
-			fields := strings.Fields(scanner.Text())
-			if len(fields) > 0 {
-				uptime, _ = strconv.ParseFloat(fields[0], 64)
-			}
-		}
-		uptimeFile.Close()
-	}
-	osInfo := getOSInfo()
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"cpu":         cpuUsage,
-		"memory":      memUsage,
-		"os":          osInfo,
-		"cpuCores":    runtime.NumCPU(),
-		"totalMemory": totalMemory * 1024,
-		"uptime":      int(uptime),
-		"goroutine":   runtime.NumGoroutine(),
+		"cpu":              cpuUsage,
+		"memory":           memUsage,
+		"disk":             diskUsage,
+		"os":               getOSInfo(),
+		"arch":             runtime.GOARCH,
+		"cpuModel":         getCPUModel(),
+		"cpuCores":         runtime.NumCPU(),
+		"totalMemory":      memTotal,
+		"freeMemory":       memAvailable,
+		"uptime":           systemUptime,
+		"systemUptime":     systemUptime,
+		"hostname":         hostname,
+		"localIPs":         localIPs,
+		"publicIP":         getConfiguredPublicIP(),
+		"uploadSpeed":      uploadSpeed,
+		"downloadSpeed":    downloadSpeed,
+		"disks":            disks,
+		"panelPort":        cfg.Port,
+		"panelVersion":     getPanelVersion(),
+		"hasRunningServer": serverInfo["hasRunningServer"],
+		"runningRoomCount": serverInfo["runningRoomCount"],
+		"serverUptime":     serverInfo["serverUptime"],
+		"terrariaVersion":  serverInfo["terrariaVersion"],
+		"serverType":       serverInfo["serverType"],
+		"gamePort":         serverInfo["gamePort"],
+		"roomName":         serverInfo["roomName"],
+		"roomId":           serverInfo["roomId"],
+		"goroutine":        runtime.NumGoroutine(),
 		"goMemory": gin.H{
 			"alloc":      m.Alloc / 1024 / 1024,
 			"totalAlloc": m.TotalAlloc / 1024 / 1024,
@@ -247,44 +593,39 @@ func GetSystemInfo(c *gin.Context) {
 		},
 	}))
 }
+
 func GetCPU(c *gin.Context) {
-	cpuUsage := getCPUUsage()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"usage": cpuUsage,
+			"usage": getCPUUsage(),
 		},
 	})
 }
+
 func GetMemory(c *gin.Context) {
 	memUsage := getMemoryUsage()
-	var totalMemory uint64
-	file, err := os.Open("/proc/meminfo")
-	if err == nil {
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[0] == "MemTotal:" {
-				totalMemory, _ = strconv.ParseUint(fields[1], 10, 64)
-				break
-			}
-		}
-		file.Close()
+	memTotal, memAvailable := readMemInfo()
+	usedMemory := uint64(0)
+	if memTotal >= memAvailable {
+		usedMemory = memTotal - memAvailable
 	}
-	usedMemory := uint64(float64(totalMemory) * memUsage / 100.0)
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
 			"usage": memUsage,
-			"used":  usedMemory * 1024,
-			"total": totalMemory * 1024,
+			"used":  usedMemory,
+			"free":  memAvailable,
+			"total": memTotal,
 		},
 	})
 }
+
 func GetSystemInfoDetail(c *gin.Context) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"cpuCores":  runtime.NumCPU(),
 		"goroutine": runtime.NumGoroutine(),
@@ -293,5 +634,13 @@ func GetSystemInfoDetail(c *gin.Context) {
 			"totalAlloc": m.TotalAlloc / 1024 / 1024,
 			"sys":        m.Sys / 1024 / 1024,
 		},
+	}))
+}
+
+func GetPanelStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"startedAt": panelStartedAt.Format(time.RFC3339Nano),
+		"startedAtUnix": panelStartedAt.Unix(),
+		"now": time.Now().UTC().Format(time.RFC3339Nano),
 	}))
 }

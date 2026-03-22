@@ -11,14 +11,52 @@ import (
 	"terraria-panel/models"
 	"github.com/gin-gonic/gin"
 )
-func CheckSteamCMD(c *gin.Context) {
-	steamcmdPath := filepath.Join(config.DataDir, "steamcmd", "steamcmd.sh")
+
+func getSteamCMDPaths() (string, string, string) {
+	steamcmdDir := filepath.Join(config.DataDir, "steamcmd")
+	launcherPath := filepath.Join(steamcmdDir, "steamcmd.sh")
+	runtimePath := filepath.Join(steamcmdDir, "linux32", "steamcmd")
 	if runtime.GOOS == "windows" {
-		steamcmdPath = filepath.Join(config.DataDir, "steamcmd", "steamcmd.exe")
+		launcherPath = filepath.Join(steamcmdDir, "steamcmd.exe")
+		runtimePath = launcherPath
 	}
-	if _, err := os.Stat(steamcmdPath); err == nil {
+	return steamcmdDir, launcherPath, runtimePath
+}
+
+func getSteamCMDState() (bool, bool, string, string, string) {
+	_, launcherPath, runtimePath := getSteamCMDPaths()
+
+	launcherExists := false
+	if info, err := os.Stat(launcherPath); err == nil && !info.IsDir() {
+		launcherExists = true
+	}
+
+	runtimeExists := false
+	if info, err := os.Stat(runtimePath); err == nil && !info.IsDir() {
+		runtimeExists = true
+	}
+
+	installed := launcherExists
+	ready := launcherExists && runtimeExists
+	if runtime.GOOS == "windows" {
+		ready = launcherExists
+	}
+
+	if ready {
+		return installed, ready, launcherPath, runtimePath, "SteamCMD 已安装"
+	}
+	if installed {
+		return installed, ready, launcherPath, runtimePath, fmt.Sprintf("SteamCMD 安装不完整，缺少运行文件: %s", runtimePath)
+	}
+	return installed, ready, launcherPath, runtimePath, "SteamCMD 未安装，可以自动安装"
+}
+
+func CheckSteamCMD(c *gin.Context) {
+	installed, ready, steamcmdPath, runtimePath, stateMessage := getSteamCMDState()
+	if ready {
 		c.JSON(http.StatusOK, gin.H{
 			"installed": true,
+			"ready":     true,
 			"path":      steamcmdPath,
 			"message":   "SteamCMD 已安装",
 		})
@@ -41,17 +79,18 @@ func CheckSteamCMD(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"installed": false,
+		"installed":       installed,
+		"ready":           false,
+		"path":            steamcmdPath,
+		"runtime_path":    runtimePath,
+		"needs_repair":    installed,
 		"can_install": true,
-		"message":   "SteamCMD 未安装，可以自动安装",
+		"message":         stateMessage,
 	})
 }
 func InstallSteamCMDAPI(c *gin.Context) {
-	steamcmdPath := filepath.Join(config.DataDir, "steamcmd", "steamcmd.sh")
-	if runtime.GOOS == "windows" {
-		steamcmdPath = filepath.Join(config.DataDir, "steamcmd", "steamcmd.exe")
-	}
-	if _, err := os.Stat(steamcmdPath); err == nil {
+	installed, ready, _, _, _ := getSteamCMDState()
+	if ready {
 		c.JSON(http.StatusOK, models.MessageResponse("SteamCMD 已安装"))
 		return
 	}
@@ -64,7 +103,11 @@ func InstallSteamCMDAPI(c *gin.Context) {
 			return
 		}
 	}
-	log.Printf("开始安装 SteamCMD...")
+	if installed {
+		log.Printf("检测到 SteamCMD 安装不完整，开始修复...")
+	} else {
+		log.Printf("开始安装 SteamCMD...")
+	}
 	if err := installSteamCMD(); err != nil {
 		log.Printf("SteamCMD 安装失败: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
@@ -76,17 +119,19 @@ func InstallSteamCMDAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("SteamCMD 安装成功！现在可以下载创意工坊模组了"))
 }
 func GetSteamCMDStatus(c *gin.Context) {
-	steamcmdDir := filepath.Join(config.DataDir, "steamcmd")
-	steamcmdPath := filepath.Join(steamcmdDir, "steamcmd.sh")
-	if runtime.GOOS == "windows" {
-		steamcmdPath = filepath.Join(steamcmdDir, "steamcmd.exe")
-	}
+	steamcmdDir, steamcmdPath, runtimePath := getSteamCMDPaths()
+	installed, ready, _, _, stateMessage := getSteamCMDState()
 	status := gin.H{
 		"os": runtime.GOOS,
 	}
-	if _, err := os.Stat(steamcmdPath); err == nil {
-		status["installed"] = true
-		status["path"] = steamcmdPath
+	status["installed"] = ready
+	status["launcher_exists"] = installed
+	status["ready"] = ready
+	status["path"] = steamcmdPath
+	status["runtime_path"] = runtimePath
+	status["message"] = stateMessage
+	status["needs_repair"] = installed && !ready
+	if installed {
 		if info, err := os.Stat(steamcmdDir); err == nil {
 			status["install_time"] = info.ModTime()
 		}
@@ -98,8 +143,6 @@ func GetSteamCMDStatus(c *gin.Context) {
 			return nil
 		})
 		status["size_mb"] = totalSize / 1024 / 1024
-	} else {
-		status["installed"] = false
 	}
 	if runtime.GOOS == "linux" {
 		depCheckCmd := exec.Command("dpkg", "-l", "lib32gcc-s1")

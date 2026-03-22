@@ -1,14 +1,19 @@
 package api
+
 import (
 	"embed"
+	"github.com/gin-gonic/gin"
 	"io/fs"
 	"net/http"
+	"path"
+	"strings"
 	"terraria-panel/middleware"
-	"github.com/gin-gonic/gin"
 )
+
 func SetupRouter(webFS embed.FS) *gin.Engine {
 	r := gin.Default()
 	r.Use(CORSMiddleware())
+	r.Use(GzipMiddleware())
 	apiGroup := r.Group("/api")
 	apiGroup.Use(middleware.RateLimitMiddleware())
 	{
@@ -23,9 +28,12 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		apiGroup.GET("/system/cpu", GetCPU)
 		apiGroup.GET("/system/memory", GetMemory)
 		apiGroup.GET("/system/detail", GetSystemInfoDetail)
+		apiGroup.GET("/system/panel-status", GetPanelStatus)
 		apiGroup.GET("/game/check", CheckGameInstalled)
 		apiGroup.GET("/game/install-info", GetGameInstallInfo)
 		apiGroup.POST("/game/install", InstallGame)
+		apiGroup.POST("/game/runtime-repair", RepairGameRuntime)
+		apiGroup.POST("/game/update", UpdateGame)
 		apiGroup.POST("/game/uninstall", UninstallGame)
 		apiGroup.GET("/game/install-progress", GetInstallProgress)
 		apiGroup.GET("/rooms", GetRooms)
@@ -67,6 +75,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.POST("/rooms/:id/start", StartRoom)
 			protected.POST("/rooms/:id/stop", StopRoom)
 			protected.POST("/rooms/:id/restart", RestartRoom)
+			protected.POST("/rooms/import-world", ImportWorld)
 			protected.DELETE("/rooms/:id/admin-token", DeleteAdminToken)
 			protected.POST("/rooms/:id/admin-token/regenerate", RegenerateAdminToken)
 			protected.GET("/rooms/:id/plugins", GetRoomPlugins)
@@ -75,6 +84,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.POST("/rooms/:id/plugins/copy", CopyPluginFromShared)
 			protected.GET("/plugins/shared", GetSharedPlugins)
 			protected.GET("/plugin-server", GetPluginServer)
+			protected.GET("/plugin-server/bootstrap-status", GetPluginServerBootstrapStatus)
 			protected.POST("/plugin-server/start", StartPluginServer)
 			protected.POST("/plugin-server/stop", StopPluginServer)
 			protected.POST("/plugin-server/restart", RestartPluginServer)
@@ -138,22 +148,33 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		apiGroup.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
 		apiGroup.GET("/ws/logs/:id", HandleRoomLogsWS)
 	}
+	// Backward-compatible WebSocket routes for older frontend bundles
+	// that still connect to /ws instead of /api/ws.
+	r.GET("/ws", HandleWebSocket)
+	r.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
+	r.GET("/ws/logs/:id", HandleRoomLogsWS)
 	distFS, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
 		panic("Failed to load frontend files: " + err.Error())
 	}
 	r.GET("/assets/*filepath", func(c *gin.Context) {
 		filepath := c.Param("filepath")
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
 		c.FileFromFS("assets"+filepath, http.FS(distFS))
 	})
 	r.NoRoute(func(c *gin.Context) {
-		path := c.Request.URL.Path
-		if path != "/" && path != "" {
-			cleanPath := path
+		requestPath := c.Request.URL.Path
+		if requestPath != "/" && requestPath != "" {
+			cleanPath := requestPath
 			if len(cleanPath) > 0 && cleanPath[0] == '/' {
 				cleanPath = cleanPath[1:]
 			}
 			if fileInfo, err := fs.Stat(distFS, cleanPath); err == nil && !fileInfo.IsDir() {
+				if strings.EqualFold(path.Base(cleanPath), "index.html") {
+					c.Header("Cache-Control", "no-cache")
+				} else {
+					c.Header("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				c.FileFromFS(cleanPath, http.FS(distFS))
 				return
 			}
@@ -163,6 +184,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			c.String(http.StatusNotFound, "Page not found")
 			return
 		}
+		c.Header("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 	})
 	return r

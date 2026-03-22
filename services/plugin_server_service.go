@@ -1,4 +1,5 @@
 package services
+
 import (
 	"database/sql"
 	"encoding/json"
@@ -11,14 +12,17 @@ import (
 	"terraria-panel/config"
 	"terraria-panel/models"
 )
+
 const (
-	PluginServerID = 0
+	PluginServerID   = 0
 	PluginServerPort = 7778
 	PluginServerName = "Plugin Server"
 )
+
 type PluginServerService struct {
 	db *sql.DB
 }
+
 func NewPluginServerService(db *sql.DB) *PluginServerService {
 	return &PluginServerService{
 		db: db,
@@ -281,7 +285,7 @@ func (s *PluginServerService) UpdatePluginServerConfig(
 	log.Printf("[DEBUG] UpdatePluginServerConfig SQL parameters:")
 	log.Printf("[DEBUG]   port = %d", port)
 	log.Printf("[DEBUG]   max_players = %d", maxPlayers)
-	log.Printf("[DEBUG]   password = %s", password)
+	log.Printf("[DEBUG]   password = [REDACTED len=%d]", len(password))
 	log.Printf("[DEBUG]   world_name = %s", worldName)
 	log.Printf("[DEBUG]   world_size = %d", worldSize)
 	log.Printf("[DEBUG]   difficulty = %d", difficulty)

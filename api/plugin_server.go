@@ -45,8 +45,8 @@ func GetPluginServer(c *gin.Context) {
 		"success":        true,
 		"data":           pluginServer,
 		"configComplete": configComplete,
-		"serverIp":      getServerIP(),
-		"logSize":       getLogFileSize(),
+		"serverIp":       getServerIP(),
+		"logSize":        getLogFileSize(),
 		"tshockVersion": getTShockVersion(),
 	}
 	c.JSON(http.StatusOK, response)
@@ -128,10 +128,14 @@ func getTShockVersion() string {
 	versionFile := filepath.Join(config.ServersDir, "tshock", ".tshock_version")
 	if data, err := os.ReadFile(versionFile); err == nil {
 		version := strings.TrimSpace(string(data))
-		if version == "5" {
-			return "5.2.4"
-		} else if version == "6" {
-			return "6.0.0-pre1"
+		if version != "" {
+			if version == "5" {
+				return "5.2.4"
+			}
+			if version == "6" {
+				return "6.x"
+			}
+			return version
 		}
 	}
 	tshockDir := filepath.Join(config.ServersDir, "tshock")
