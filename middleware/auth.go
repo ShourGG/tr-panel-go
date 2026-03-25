@@ -14,6 +14,8 @@ import (
 
 var jwtSecret []byte
 
+const tokenIssuer = "terraria-panel"
+
 func init() {
 	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if len(secret) < 32 {
@@ -30,13 +32,17 @@ type Claims struct {
 }
 
 func GenerateToken(user *models.User) (string, error) {
+	now := time.Now()
 	claims := Claims{
 		UserID:   user.ID,
 		Username: user.Username,
 		Role:     user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)),
+			Issuer:    tokenIssuer,
+			Subject:   user.Username,
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -58,9 +64,16 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		tokenString := parts[1]
-		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		})
+		token, err := jwt.ParseWithClaims(
+			tokenString,
+			&Claims{},
+			func(token *jwt.Token) (interface{}, error) {
+				return jwtSecret, nil
+			},
+			jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+			jwt.WithIssuer(tokenIssuer),
+			jwt.WithLeeway(5*time.Second),
+		)
 		if err != nil || !token.Valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的认证令牌"})
 			c.Abort()
