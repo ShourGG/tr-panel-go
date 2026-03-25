@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -34,6 +35,11 @@ var (
 	lastNetworkTXBytes    uint64
 	lastNetworkSampleTime time.Time
 	panelStartedAt        = time.Now().UTC()
+	cachedPublicIP        string
+	lastPublicIPLookupAt  time.Time
+	publicIPMutex         sync.RWMutex
+	publicIPSuccessTTL    = 10 * time.Minute
+	publicIPFailureTTL    = 1 * time.Minute
 )
 
 func InitSystemMonitoring() {
@@ -396,7 +402,82 @@ func getConfiguredPublicIP() string {
 	if ip := strings.TrimSpace(os.Getenv("SERVER_IP")); ip != "" {
 		return ip
 	}
+	return getPublicIPFromCache()
+}
+
+func getPublicIPFromCache() string {
+	publicIPMutex.RLock()
+	cached := cachedPublicIP
+	lastLookup := lastPublicIPLookupAt
+	publicIPMutex.RUnlock()
+
+	age := time.Since(lastLookup)
+	if cached != "" && !lastLookup.IsZero() && age < publicIPSuccessTTL {
+		return cached
+	}
+	if cached == "" && !lastLookup.IsZero() && age < publicIPFailureTTL {
+		return "-"
+	}
+
+	publicIPMutex.Lock()
+	defer publicIPMutex.Unlock()
+
+	age = time.Since(lastPublicIPLookupAt)
+	if cachedPublicIP != "" && !lastPublicIPLookupAt.IsZero() && age < publicIPSuccessTTL {
+		return cachedPublicIP
+	}
+	if cachedPublicIP == "" && !lastPublicIPLookupAt.IsZero() && age < publicIPFailureTTL {
+		return "-"
+	}
+
+	if detected := detectPublicIP(); detected != "" {
+		cachedPublicIP = detected
+		lastPublicIPLookupAt = time.Now()
+		return detected
+	}
+
+	lastPublicIPLookupAt = time.Now()
+	if cachedPublicIP != "" {
+		return cachedPublicIP
+	}
+
 	return "-"
+}
+
+func detectPublicIP() string {
+	endpoints := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://checkip.amazonaws.com",
+		"https://ipv4.icanhazip.com",
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, endpoint := range endpoints {
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "terraria-panel/1.0")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 128))
+		resp.Body.Close()
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		ipText := strings.TrimSpace(string(body))
+		if net.ParseIP(ipText) != nil {
+			return ipText
+		}
+	}
+
+	return ""
 }
 
 func getDiskInfo() ([]gin.H, float64) {
