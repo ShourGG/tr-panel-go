@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"terraria-panel/middleware"
 	"terraria-panel/models"
@@ -14,7 +15,8 @@ import (
 )
 
 var (
-	userStorage storage.UserStorage
+	userStorage      storage.UserStorage
+	customUIDPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 )
 
 func SetUserStorage(s storage.UserStorage) {
@@ -77,10 +79,8 @@ func validateCustomUID(customUID string) string {
 		return "自定义UID长度需在 3 到 32 个字符之间"
 	}
 
-	for _, ch := range trimmed {
-		if unicode.IsSpace(ch) {
-			return "自定义UID不能包含空白字符"
-		}
+	if !customUIDPattern.MatchString(trimmed) {
+		return "自定义UID只能包含英文字母和数字"
 	}
 
 	return ""
@@ -231,7 +231,7 @@ func Register(c *gin.Context) {
 		Username:  req.Username,
 		Password:  string(hashedPassword),
 		Role:      role,
-		CustomUID: req.Username,
+		CustomUID: "",
 	}
 	if err := userStorage.Create(user); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建用户失败"))
@@ -307,6 +307,10 @@ func UpdateCurrentUserProfile(c *gin.Context) {
 	}
 
 	trimmedUID := strings.TrimSpace(req.CustomUID)
+	if strings.EqualFold(trimmedUID, user.Username) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("自定义UID不能与用户名相同"))
+		return
+	}
 
 	usernameOwner, err := userStorage.GetByUsername(trimmedUID)
 	if err != nil {

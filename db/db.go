@@ -1,17 +1,20 @@
 package db
+
 import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	_ "github.com/glebarez/go-sqlite"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	_ "github.com/glebarez/go-sqlite"
 )
+
 //go:embed schema.sql
 var schemaSQL string
 var DB *sql.DB
+
 func Init(dbPath string) error {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -80,7 +83,7 @@ func addCustomUIDColumn() error {
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return err
 	}
-	if _, err := DB.Exec("UPDATE users SET custom_uid = username WHERE COALESCE(custom_uid, '') = ''"); err != nil {
+	if _, err := DB.Exec("UPDATE users SET custom_uid = '' WHERE LOWER(COALESCE(custom_uid, '')) = LOWER(username)"); err != nil {
 		return err
 	}
 	if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_custom_uid_unique ON users(custom_uid) WHERE custom_uid <> ''"); err != nil {
