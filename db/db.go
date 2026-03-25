@@ -60,6 +60,9 @@ func migrateDatabase() error {
 	if err := addServerModeColumn(); err != nil {
 		log.Printf("⚠️ server_mode 字段添加失败: %v", err)
 	}
+	if err := addCustomUIDColumn(); err != nil {
+		log.Printf("⚠️ custom_uid 字段添加失败: %v", err)
+	}
 	log.Println("✅ 数据库迁移检查完成")
 	return nil
 }
@@ -71,6 +74,22 @@ func addServerModeColumn() error {
 	log.Println("✅ users.server_mode 字段检查完成")
 	return nil
 }
+
+func addCustomUIDColumn() error {
+	_, err := DB.Exec("ALTER TABLE users ADD COLUMN custom_uid TEXT DEFAULT ''")
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+	if _, err := DB.Exec("UPDATE users SET custom_uid = username WHERE COALESCE(custom_uid, '') = ''"); err != nil {
+		return err
+	}
+	if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_custom_uid_unique ON users(custom_uid) WHERE custom_uid <> ''"); err != nil {
+		return err
+	}
+	log.Println("✅ users.custom_uid 字段检查完成")
+	return nil
+}
+
 func ensurePluginServerTable() error {
 	var tableName string
 	err := DB.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_server'").Scan(&tableName)

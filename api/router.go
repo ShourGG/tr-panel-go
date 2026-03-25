@@ -67,6 +67,9 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		protected := apiGroup.Group("")
 		protected.Use(middleware.AuthMiddleware())
 		{
+			protected.GET("/auth/me", GetCurrentUser)
+			protected.PUT("/auth/profile", UpdateCurrentUserProfile)
+			protected.PUT("/auth/password", ChangeCurrentUserPassword)
 			protected.GET("/worlds", ListWorlds)
 			protected.POST("/worlds", CreateWorld)
 			protected.DELETE("/worlds/:filename", DeleteWorld)

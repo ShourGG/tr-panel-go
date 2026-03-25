@@ -19,6 +19,7 @@ type PlayerStorage interface {
 }
 type UserStorage interface {
 	GetByUsername(username string) (*models.User, error)
+	GetByCustomUID(customUID string) (*models.User, error)
 	Create(user *models.User) error
 	Update(user *models.User) error
 	Count() (int, error)

@@ -37,6 +37,7 @@ type User struct {
 	Username  string    `json:"username" db:"username"`
 	Password  string    `json:"-" db:"password"`
 	Role      string    `json:"role" db:"role"`
+	CustomUID string    `json:"customUid" db:"custom_uid"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
