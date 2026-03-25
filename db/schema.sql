@@ -145,7 +145,6 @@ CREATE INDEX IF NOT EXISTS idx_operation_logs_user_id ON operation_logs(user_id)
 CREATE INDEX IF NOT EXISTS idx_operation_logs_created_at ON operation_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts(username);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip_address);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_custom_uid_unique ON users(custom_uid) WHERE custom_uid <> '';
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
 CREATE INDEX IF NOT EXISTS idx_task_execution_logs_task_id ON task_execution_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_execution_logs_started_at ON task_execution_logs(started_at);
