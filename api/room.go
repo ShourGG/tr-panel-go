@@ -67,16 +67,15 @@ func GetWorldsForRoom(c *gin.Context) {
 			}
 		}
 	}
-	sharedDir := filepath.Join(config.DataDir, "shared-worlds")
-	os.MkdirAll(sharedDir, 0755)
-	if files, err := os.ReadDir(sharedDir); err == nil {
+	os.MkdirAll(config.SharedWorldsDir, 0755)
+	if files, err := os.ReadDir(config.SharedWorldsDir); err == nil {
 		for _, file := range files {
 			if !file.IsDir() && filepath.Ext(file.Name()) == worldExt {
 				if _, exists := worldMap[file.Name()]; !exists {
 					worldMap[file.Name()] = WorldInfo{
 						Name:   file.Name(),
 						Source: "共享世界",
-						Path:   filepath.Join(sharedDir, file.Name()),
+						Path:   filepath.Join(config.SharedWorldsDir, file.Name()),
 					}
 				}
 			}
@@ -112,13 +111,12 @@ func ImportWorld(c *gin.Context) {
 		return
 	}
 
-	sharedDir := filepath.Join(config.DataDir, "shared-worlds")
-	if err := os.MkdirAll(sharedDir, 0755); err != nil {
+	if err := os.MkdirAll(config.SharedWorldsDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建共享世界目录失败"))
 		return
 	}
 
-	targetPath := filepath.Join(sharedDir, filename)
+	targetPath := filepath.Join(config.SharedWorldsDir, filename)
 	if _, err := os.Stat(targetPath); err == nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("同名世界文件已存在"))
 		return
@@ -277,13 +275,12 @@ func copyWorldFileFromSource(worldFileName string, targetPath string, serverType
 			}
 		}
 	}
-	sharedDir := filepath.Join(config.DataDir, "shared-worlds")
-	sourcePath := filepath.Join(sharedDir, worldFileName)
+	sourcePath := filepath.Join(config.SharedWorldsDir, worldFileName)
 	if _, err := os.Stat(sourcePath); err == nil {
 		log.Printf("[INFO] 找到共享世界文件: %s", sourcePath)
 		if err := copyFile(sourcePath, targetPath); err == nil {
 			log.Printf("[INFO] 世界文件复制成功: %s -> %s", sourcePath, targetPath)
-			copyBackupFiles(sharedDir, filepath.Dir(targetPath), worldFileName, worldExt)
+			copyBackupFiles(config.SharedWorldsDir, filepath.Dir(targetPath), worldFileName, worldExt)
 			return true
 		} else {
 			log.Printf("[ERROR] 复制世界文件失败: %v", err)

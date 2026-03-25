@@ -1,17 +1,21 @@
 package config
+
 import (
 	"os"
 	"path/filepath"
 )
+
 var (
-	DataDir     string
-	RoomsFile   string
-	PlayersFile string
-	BackupDir   string
-	LogsDir     string
-	WorldsDir   string
-	ServersDir  string
+	DataDir         string
+	RoomsFile       string
+	PlayersFile     string
+	BackupDir       string
+	LogsDir         string
+	WorldsDir       string
+	SharedWorldsDir string
+	ServersDir      string
 )
+
 func init() {
 	DataDir = os.Getenv("DATA_DIR")
 	if DataDir == "" {
@@ -31,10 +35,12 @@ func init() {
 	BackupDir = filepath.Join(DataDir, "backups")
 	LogsDir = filepath.Join(DataDir, "logs")
 	WorldsDir = filepath.Join(DataDir, "worlds")
+	SharedWorldsDir = filepath.Join(DataDir, "shared-worlds")
 	ServersDir = filepath.Join(DataDir, "servers")
 	os.MkdirAll(BackupDir, 0755)
 	os.MkdirAll(LogsDir, 0755)
 	os.MkdirAll(WorldsDir, 0755)
+	os.MkdirAll(SharedWorldsDir, 0755)
 	os.MkdirAll(ServersDir, 0755)
 	os.MkdirAll(filepath.Join(ServersDir, "vanilla"), 0755)
 	os.MkdirAll(filepath.Join(ServersDir, "tModLoader"), 0755)

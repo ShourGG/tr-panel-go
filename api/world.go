@@ -1,4 +1,5 @@
 package api
+
 import (
 	"fmt"
 	"log"
@@ -9,36 +10,47 @@ import (
 	"strings"
 	"terraria-panel/config"
 	"terraria-panel/models"
+
 	"github.com/gin-gonic/gin"
 )
+
 type WorldCreateRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Size     int    `json:"size" binding:"required"`
 	Seed     string `json:"seed"`
 	Filename string `json:"filename" binding:"required"`
 }
+
+func getManagedWorldsDir() string {
+	return config.SharedWorldsDir
+}
+
 func ListWorlds(c *gin.Context) {
-	files, err := os.ReadDir(config.WorldsDir)
+	files, err := os.ReadDir(getManagedWorldsDir())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取世界目录失败"))
 		return
 	}
 	var worlds []map[string]interface{}
 	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".wld") {
+		if !file.IsDir() && (strings.HasSuffix(file.Name(), ".wld") || strings.HasSuffix(file.Name(), ".twld")) {
 			info, _ := file.Info()
 			worlds = append(worlds, map[string]interface{}{
-				"name": file.Name(),
-				"size": info.Size(),
-				"time": info.ModTime(),
+				"name":   file.Name(),
+				"size":   info.Size(),
+				"time":   info.ModTime(),
+				"source": "共享世界",
+				"path":   filepath.Join(getManagedWorldsDir(), file.Name()),
 			})
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"code": 200,
-		"data": worlds,
+		"success": true,
+		"code":    200,
+		"data":    worlds,
 	})
 }
+
 func CreateWorld(c *gin.Context) {
 	var req WorldCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -57,7 +69,7 @@ func CreateWorld(c *gin.Context) {
 	if !strings.HasSuffix(req.Filename, ".wld") {
 		req.Filename += ".wld"
 	}
-	worldPath := filepath.Join(config.WorldsDir, req.Filename)
+	worldPath := filepath.Join(getManagedWorldsDir(), req.Filename)
 	if _, err := os.Stat(worldPath); err == nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("世界文件已存在"))
 		return
@@ -100,15 +112,19 @@ func CreateWorld(c *gin.Context) {
 			log.Printf("[INFO] 世界创建完成: %s", req.Filename)
 		}
 	}()
-	c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("正在创建世界 '%s'，这可能需要1-2分钟...", req.Name)))
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("正在创建共享世界 '%s'，这可能需要1-2分钟...", req.Name),
+	})
 }
+
 func DeleteWorld(c *gin.Context) {
 	filename := c.Param("filename")
 	if filename == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("文件名不能为空"))
 		return
 	}
-	worldPath := filepath.Join(config.WorldsDir, filename)
+	worldPath := filepath.Join(getManagedWorldsDir(), filename)
 	if _, err := os.Stat(worldPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("世界文件不存在"))
 		return
@@ -119,5 +135,8 @@ func DeleteWorld(c *gin.Context) {
 		return
 	}
 	log.Printf("[INFO] 删除世界文件: %s", filename)
-	c.JSON(http.StatusOK, models.MessageResponse("世界删除成功"))
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "共享世界删除成功",
+	})
 }
