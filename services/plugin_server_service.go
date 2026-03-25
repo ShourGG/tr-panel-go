@@ -39,17 +39,11 @@ func (s *PluginServerService) InitializePluginServer() error {
 		if err := s.ensurePluginServerDirectories(); err != nil {
 			return fmt.Errorf("failed to ensure plugin server directories: %v", err)
 		}
-		if err := s.InitializeConfigFile(); err != nil {
-			return fmt.Errorf("failed to initialize config file: %v", err)
-		}
 		return nil
 	}
 	log.Printf("[WARN] Plugin server configuration not found, creating default...")
 	if err := s.ensurePluginServerDirectories(); err != nil {
 		return fmt.Errorf("failed to create plugin server directories: %v", err)
-	}
-	if err := s.InitializeConfigFile(); err != nil {
-		return fmt.Errorf("failed to initialize config file: %v", err)
 	}
 	log.Printf("[INFO] Plugin server initialization complete")
 	return nil

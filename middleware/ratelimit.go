@@ -34,7 +34,10 @@ func getVisitor(ip string) *rate.Limiter {
 	defer mu.Unlock()
 	v, exists := visitors[ip]
 	if !exists {
-		limiter := rate.NewLimiter(2, 20)
+		// SPA pages often issue multiple parallel GET requests on first load
+		// and short route transitions. Use a less aggressive general limit
+		// while keeping the stricter auth limiter unchanged.
+		limiter := rate.NewLimiter(8, 60)
 		visitors[ip] = &visitor{limiter, time.Now()}
 		return limiter
 	}

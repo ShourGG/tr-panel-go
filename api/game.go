@@ -47,6 +47,24 @@ type GamePackageSpec struct {
 	RuntimeMajor  string
 }
 
+type VanillaVersionOption struct {
+	Code        string `json:"code"`
+	Version     string `json:"version"`
+	DownloadURL string `json:"downloadUrl"`
+	Recommended bool   `json:"recommended"`
+}
+
+type TModLoaderReleaseInfo struct {
+	Code            string `json:"code"`
+	Version         string `json:"version"`
+	TagName         string `json:"tagName"`
+	TerrariaVersion string `json:"terrariaVersion"`
+	DownloadURL     string `json:"downloadUrl"`
+	PublishedAt     string `json:"publishedAt"`
+	Prerelease      bool   `json:"prerelease"`
+	Recommended     bool   `json:"recommended"`
+}
+
 type DotNetRuntimeHealth struct {
 	Healthy          bool   `json:"healthy"`
 	NeedsRepair      bool   `json:"needsRepair"`
@@ -69,6 +87,14 @@ type ActiveGameTask struct {
 }
 
 var numericVersionRegexp = regexp.MustCompile(`\d+`)
+
+var supportedVanillaVersionCodes = []string{
+	"1456", "1455", "1454", "1453", "1452", "1451", "1450",
+	"1449", "1448", "1447", "1446", "1445", "1444",
+}
+
+const latestVanillaVersionCode = "1456"
+const latestVanillaPublishedAt = "2026-03-09T18:30:10Z"
 
 var activeGameTasks = struct {
 	sync.RWMutex
@@ -101,6 +127,54 @@ func setActiveGameTask(gameType, action, message string, progress int) {
 	}
 
 	activeGameTasks.tasks[gameType] = task
+}
+
+func vanillaVersionFromCode(code string) string {
+	if len(code) != 4 {
+		return ""
+	}
+	return fmt.Sprintf("%c.%c.%c.%c", code[0], code[1], code[2], code[3])
+}
+
+func vanillaDownloadURLFromCode(code string) string {
+	return fmt.Sprintf("https://terraria.org/api/download/pc-dedicated-server/terraria-server-%s.zip", code)
+}
+
+func getSupportedVanillaVersions() []VanillaVersionOption {
+	options := make([]VanillaVersionOption, 0, len(supportedVanillaVersionCodes))
+	for _, code := range supportedVanillaVersionCodes {
+		options = append(options, VanillaVersionOption{
+			Code:        code,
+			Version:     vanillaVersionFromCode(code),
+			DownloadURL: vanillaDownloadURLFromCode(code),
+			Recommended: code == latestVanillaVersionCode,
+		})
+	}
+	return options
+}
+
+func resolveVanillaVersionOption(code string) (VanillaVersionOption, bool) {
+	normalized := strings.TrimSpace(code)
+	if normalized == "" {
+		normalized = latestVanillaVersionCode
+	}
+	for _, option := range getSupportedVanillaVersions() {
+		if option.Code == normalized || option.Version == normalized {
+			return option, true
+		}
+	}
+	return VanillaVersionOption{}, false
+}
+
+func extractTModLoaderTerrariaVersion(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	matches := regexp.MustCompile(`\d+\.\d+\.\d+`).FindAllString(name, -1)
+	if len(matches) > 0 {
+		return matches[0]
+	}
+	return ""
 }
 
 func clearActiveGameTask(gameType string) {
@@ -187,9 +261,10 @@ func CheckGameInstalled(c *gin.Context) {
 }
 func GetGameInstallInfo(c *gin.Context) {
 	osType := runtime.GOOS
-	vanillaUrl := "https://terraria.org/api/download/pc-dedicated-server/terraria-server-1449.zip"
-	vanillaVersion := "1.4.4.9"
-	tmodUrl, tmodVersion := getLatestTModLoaderRelease()
+	vanillaRecommended, _ := resolveVanillaVersionOption(latestVanillaVersionCode)
+	vanillaVersions := getSupportedVanillaVersions()
+	tmodRecommended, _ := resolveTModLoaderReleaseOption("")
+	tmodVersions := getTModLoaderReleaseOptions()
 	tshock5Info := getLatestTShock5ReleaseInfo()
 	tshock6Info := getLatestTShock6ReleaseInfo()
 	activeTasks := getActiveGameTasksSnapshot()
@@ -210,29 +285,41 @@ func GetGameInstallInfo(c *gin.Context) {
 			"activeTasks": activeTasks,
 			"vanilla": gin.H{
 				"name":             "Terraria 原版服务器",
-				"version":          vanillaVersion,
+				"version":          vanillaRecommended.Version,
 				"path":             filepath.Join(config.ServersDir, "vanilla"),
-				"downloadUrl":      vanillaUrl,
+				"downloadUrl":      vanillaRecommended.DownloadURL,
 				"size":             "约 40 MB",
 				"installed":        vanillaInstalled,
 				"installedVersion": vanillaInstalledVersion,
-				"latestVersion":    vanillaVersion,
-				"updateAvailable":  vanillaInstalled && isGameUpdateAvailable(vanillaInstalledVersion, vanillaVersion),
+				"latestVersion":    vanillaRecommended.Version,
+				"updateAvailable":  vanillaInstalled && isGameUpdateAvailable(vanillaInstalledVersion, vanillaRecommended.Version),
 				"updateSupported":  true,
 				"updateChannel":    "vanilla",
+				"terrariaVersion":  vanillaRecommended.Version,
+				"publishedAt":      latestVanillaPublishedAt,
+				"availableVersions": vanillaVersions,
+				"recommendedVersion": vanillaRecommended.Version,
+				"recommendedVersionCode": vanillaRecommended.Code,
 			},
 			"tmodloader": gin.H{
 				"name":             "tModLoader 服务器",
-				"version":          tmodVersion,
+				"version":          tmodRecommended.Version,
 				"path":             filepath.Join(config.ServersDir, "tModLoader"),
-				"downloadUrl":      tmodUrl,
+				"downloadUrl":      tmodRecommended.DownloadURL,
 				"size":             "约 50 MB",
 				"installed":        tmodInstalled,
 				"installedVersion": tmodInstalledVersion,
-				"latestVersion":    tmodVersion,
-				"updateAvailable":  tmodInstalled && isGameUpdateAvailable(tmodInstalledVersion, tmodVersion),
+				"latestVersion":    tmodRecommended.Version,
+				"updateAvailable":  tmodInstalled && isGameUpdateAvailable(tmodInstalledVersion, tmodRecommended.Version),
 				"updateSupported":  true,
 				"updateChannel":    "tmodloader",
+				"requiresNet":      "8.0",
+				"terrariaVersion":  tmodRecommended.TerrariaVersion,
+				"publishedAt":      tmodRecommended.PublishedAt,
+				"prerelease":       tmodRecommended.Prerelease,
+				"availableVersions": tmodVersions,
+				"recommendedVersion": tmodRecommended.Version,
+				"recommendedVersionCode": tmodRecommended.TagName,
 			},
 			"tshock5": gin.H{
 				"name":             "TShock 5 稳定版",
@@ -277,7 +364,8 @@ func GetGameInstallInfo(c *gin.Context) {
 }
 func InstallGame(c *gin.Context) {
 	var req struct {
-		GameType string `json:"gameType" binding:"required"`
+		GameType    string `json:"gameType" binding:"required"`
+		VersionCode string `json:"versionCode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -303,6 +391,24 @@ func InstallGame(c *gin.Context) {
 	}
 	if req.GameType == "tshock" {
 		req.GameType = "tshock5"
+	}
+	if req.GameType == "vanilla" {
+		if _, ok := resolveVanillaVersionOption(req.VersionCode); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "无效的原版版本号",
+			})
+			return
+		}
+	}
+	if req.GameType == "tmodloader" {
+		if _, ok := resolveTModLoaderReleaseOption(req.VersionCode); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "无效的 tModLoader 版本号",
+			})
+			return
+		}
 	}
 	if blockingMessage := getBlockingGameTaskMessage(req.GameType); blockingMessage != "" {
 		c.JSON(http.StatusOK, gin.H{
@@ -351,10 +457,16 @@ func InstallGame(c *gin.Context) {
 	}
 	fmt.Printf("\n========================================\n")
 	fmt.Printf("[安装开始] 游戏类型: %s\n", req.GameType)
+	if req.GameType == "vanilla" {
+		fmt.Printf("[安装开始] 原版版本: %s\n", strings.TrimSpace(req.VersionCode))
+	}
+	if req.GameType == "tmodloader" {
+		fmt.Printf("[安装开始] tModLoader 版本: %s\n", strings.TrimSpace(req.VersionCode))
+	}
 	fmt.Printf("时间: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Printf("========================================\n\n")
 	setActiveGameTask(req.GameType, "install", "准备开始安装...", 0)
-	go installGameServer(req.GameType)
+	go installGameServer(req.GameType, strings.TrimSpace(req.VersionCode))
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": fmt.Sprintf("开始安装 %s 服务器，请稍等...", req.GameType),
@@ -643,10 +755,11 @@ func sendRepairComplete(gameType string, message string, continueInstall bool) {
 	}
 	fmt.Printf("[修复:%s] 完成: %s\n", gameType, message)
 }
-func installGameServer(gameType string) {
+func installGameServer(gameType string, selectedVersionCode ...string) {
 	var downloadUrl string
 	var targetDir string
 	var resolvedVersion string
+	var resolvedVersionCode string
 	sendProgress := func(message string, progress int) {
 		sendInstallProgress(gameType, message, progress)
 	}
@@ -655,14 +768,33 @@ func installGameServer(gameType string) {
 	}
 	sendProgress("开始准备安装", 0)
 	if gameType == "vanilla" {
-		downloadUrl = "https://terraria.org/api/download/pc-dedicated-server/terraria-server-1449.zip"
-		resolvedVersion = "1.4.4.9"
+		versionCode := ""
+		if len(selectedVersionCode) > 0 {
+			versionCode = strings.TrimSpace(selectedVersionCode[0])
+		}
+		option, ok := resolveVanillaVersionOption(versionCode)
+		if !ok {
+			sendError("无效的原版版本号")
+			return
+		}
+		downloadUrl = option.DownloadURL
+		resolvedVersion = option.Version
+		resolvedVersionCode = option.Code
 		targetDir = filepath.Join(config.ServersDir, "vanilla")
+		fmt.Printf("准备安装 Terraria 原版 %s (%s)\n", resolvedVersion, resolvedVersionCode)
 	} else if gameType == "tmodloader" {
-		url, version := getLatestTModLoaderRelease()
-		downloadUrl = url
-		resolvedVersion = version
-		fmt.Printf("准备安装 tModLoader %s\n", version)
+		selectedVersion := ""
+		if len(selectedVersionCode) > 0 {
+			selectedVersion = strings.TrimSpace(selectedVersionCode[0])
+		}
+		release, ok := resolveTModLoaderReleaseOption(selectedVersion)
+		if !ok {
+			sendError("无效的 tModLoader 版本号")
+			return
+		}
+		downloadUrl = release.DownloadURL
+		resolvedVersion = release.Version
+		fmt.Printf("准备安装 tModLoader %s (Terraria %s)\n", release.Version, release.TerrariaVersion)
 		targetDir = filepath.Join(config.ServersDir, "tModLoader")
 	} else if gameType == "tshock5" {
 		release := getLatestTShock5ReleaseInfo()
@@ -825,8 +957,9 @@ func installGameServer(gameType string) {
 	os.Remove(downloadFile)
 	if gameType == "vanilla" {
 		sendProgress("整理文件结构", 85)
-		linuxDir := filepath.Join(targetDir, "1449", "Linux")
-		windowsDir := filepath.Join(targetDir, "1449", "Windows")
+		versionFolder := resolvedVersionCode
+		linuxDir := filepath.Join(targetDir, versionFolder, "Linux")
+		windowsDir := filepath.Join(targetDir, versionFolder, "Windows")
 		sourceDir := ""
 		if runtime.GOOS == "linux" {
 			sourceDir = linuxDir
@@ -835,7 +968,7 @@ func installGameServer(gameType string) {
 		}
 		if _, err := os.Stat(sourceDir); err == nil {
 			moveFiles(sourceDir, targetDir)
-			os.RemoveAll(filepath.Join(targetDir, "1449"))
+			os.RemoveAll(filepath.Join(targetDir, versionFolder))
 		}
 		if runtime.GOOS == "linux" {
 			terrariaServer := filepath.Join(targetDir, "TerrariaServer")
@@ -1269,97 +1402,28 @@ func checkDotNetVersion() (bool, string, error) {
 	return hasNet8, outputStr, nil
 }
 func installDotNet8(gameType string) error {
-	fmt.Println("\n========================================")
-	fmt.Println("[.NET 8.0] 开始检测和安装流程")
-	fmt.Println("========================================")
-	sendInstallProgress(gameType, "检测 .NET 运行时...", 91)
-	hasNet8, installedVersions, err := checkDotNetVersion()
-	if err != nil {
-		fmt.Printf("[.NET检测] 错误: %v\n", err)
-		sendInstallProgress(gameType, "未检测到 dotnet 命令，开始安装...", 92)
-	} else if hasNet8 {
-		fmt.Println("[.NET检测] ✓ 已安装 .NET 8.0 运行时，跳过安装")
-		sendInstallProgress(gameType, "✓ 已安装 .NET 8.0，跳过安装", 95)
-		return nil
-	} else {
-		fmt.Printf("[.NET检测] 未检测到 .NET 8.0\n当前已安装:\n%s\n", installedVersions)
-		sendInstallProgress(gameType, "未检测到 .NET 8.0，开始安装...", 92)
-	}
-	if _, err := os.Stat("/etc/debian_version"); err != nil {
-		errMsg := "不支持的Linux发行版，仅支持 Debian/Ubuntu"
-		fmt.Printf("[.NET安装] 错误: %s\n", errMsg)
-		sendInstallProgress(gameType, fmt.Sprintf("警告: %s", errMsg), 95)
-		return fmt.Errorf(errMsg)
-	}
-	sendInstallProgress(gameType, "添加 Microsoft 包仓库...", 93)
-	fmt.Println("[.NET安装] 添加 Microsoft 包仓库...")
-	downloadCmd := exec.Command("wget", "-q",
-		"https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb",
-		"-O", "/tmp/packages-microsoft-prod.deb")
-	if output, err := downloadCmd.CombinedOutput(); err != nil {
-		errMsg := fmt.Sprintf("下载 Microsoft 包配置失败: %v\n%s", err, string(output))
-		fmt.Printf("[.NET安装] 错误: %s\n", errMsg)
-		sendInstallProgress(gameType, "警告: Microsoft 包仓库添加失败", 95)
-		return fmt.Errorf(errMsg)
-	}
-	if output, err := runPackageManagerCommandWithRetry(gameType, 93, "安装 Microsoft 包仓库配置", "dpkg", "-i", "/tmp/packages-microsoft-prod.deb"); err != nil {
-		fmt.Printf("[.NET安装] dpkg 警告: %v\n%s\n", err, string(output))
-	}
-	os.Remove("/tmp/packages-microsoft-prod.deb")
-	sendInstallProgress(gameType, "更新包列表...", 94)
-	fmt.Println("[.NET安装] 更新包列表...")
-	if output, err := runPackageManagerCommandWithRetry(gameType, 94, "更新包列表", "apt-get", "update", "-qq"); err != nil {
-		fmt.Printf("[.NET安装] apt-get update 警告: %v\n%s\n", err, string(output))
-	}
-	sendInstallProgress(gameType, "安装 .NET 8.0 运行时（可能需要几分钟）...", 95)
-	fmt.Println("[.NET安装] 安装 .NET 8.0 运行时...")
-	output, err := runPackageManagerCommandWithRetry(gameType, 95, "安装 .NET 8.0 运行时", "apt-get", "install", "-y", "dotnet-runtime-8.0")
-	fmt.Printf("[.NET安装] 安装输出:\n%s\n", string(output))
-	if err != nil {
-		errMsg := fmt.Sprintf("安装 .NET 8.0 失败: %v", err)
-		fmt.Printf("[.NET安装] 错误: %s\n", errMsg)
-		sendInstallProgress(gameType, "警告: .NET 8.0 自动安装失败，请手动安装", 95)
-		return fmt.Errorf(errMsg)
-	}
-	sendInstallProgress(gameType, "验证 .NET 8.0 安装...", 97)
-	fmt.Println("[.NET安装] 验证安装...")
-	hasNet8, installedVersions, err = checkDotNetVersion()
-	if err != nil {
-		errMsg := fmt.Sprintf("验证失败: %v", err)
-		fmt.Printf("[.NET安装] 错误: %s\n", errMsg)
-		sendInstallProgress(gameType, "警告: .NET 8.0 验证失败", 98)
-		return fmt.Errorf(errMsg)
-	}
-	if !hasNet8 {
-		errMsg := "安装后未检测到 .NET 8.0"
-		fmt.Printf("[.NET安装] 错误: %s\n当前已安装:\n%s\n", errMsg, installedVersions)
-		sendInstallProgress(gameType, "警告: .NET 8.0 安装验证失败", 98)
-		return fmt.Errorf(errMsg)
-	}
-	fmt.Println("[.NET安装] ✓ .NET 8.0 安装成功！")
-	fmt.Printf("已安装的运行时:\n%s\n", installedVersions)
-	sendInstallProgress(gameType, "✓ .NET 8.0 安装成功", 98)
-	return nil
+	return installDotNetRuntime(gameType, "8.0")
 }
 func installDotNetIfNeeded(gameType string) {
 	if err := installDotNet8(gameType); err != nil {
 		fmt.Printf("[.NET安装] 自动安装失败: %v\n", err)
 		fmt.Println("[.NET安装] 请手动执行以下命令安装:")
-		fmt.Println("  wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb")
-		fmt.Println("  sudo dpkg -i packages-microsoft-prod.deb")
-		fmt.Println("  sudo apt-get update")
-		fmt.Println("  sudo apt-get install -y dotnet-runtime-8.0")
+		fmt.Printf("  %s\n", buildManualDotNetInstallCommand("8.0", ""))
 	}
 }
 
 func resolveGamePackageSpec(gameType string) (GamePackageSpec, error) {
 	switch gameType {
 	case "vanilla":
+		option, ok := resolveVanillaVersionOption(latestVanillaVersionCode)
+		if !ok {
+			return GamePackageSpec{}, fmt.Errorf("无法解析原版推荐版本")
+		}
 		return GamePackageSpec{
 			GameType:      gameType,
-			DownloadURL:   "https://terraria.org/api/download/pc-dedicated-server/terraria-server-1449.zip",
+			DownloadURL:   option.DownloadURL,
 			TargetDir:     filepath.Join(config.ServersDir, "vanilla"),
-			LatestVersion: "1.4.4.9",
+			LatestVersion: option.Version,
 			UpdateChannel: "vanilla",
 		}, nil
 	case "tmodloader":
@@ -1788,6 +1852,12 @@ func extractTarFile(src string, dest string) error {
 	return nil
 }
 func getLatestTModLoaderRelease() (string, string) {
+	releases := getTModLoaderReleaseOptions()
+	for _, release := range releases {
+		if release.Recommended {
+			return release.DownloadURL, release.Version
+		}
+	}
 	apiUrl := "https://api.github.com/repos/tModLoader/tModLoader/releases/latest"
 	req, err := http.NewRequest("GET", apiUrl, nil)
 	if err != nil {
@@ -1828,6 +1898,144 @@ func getLatestTModLoaderRelease() (string, string) {
 	}
 	fmt.Printf("未找到合适的tModLoader文件，使用默认值\n")
 	return "https://github.com/tModLoader/tModLoader/releases/download/v2025.08.3.1/tModLoader.zip", "2025.08.3.1"
+}
+
+func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
+	apiURL := "https://api.github.com/repos/tModLoader/tModLoader/releases?per_page=12"
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return []TModLoaderReleaseInfo{
+			{
+				Code:            "v2026.01.3.3",
+				Version:         "2026.01.3.3",
+				TagName:         "v2026.01.3.3",
+				TerrariaVersion: "1.4.4",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
+				PublishedAt:     "2026-03-19T01:43:34Z",
+				Prerelease:      false,
+				Recommended:     true,
+			},
+		}
+	}
+	req.Header.Set("User-Agent", "Terraria-Panel")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return []TModLoaderReleaseInfo{
+			{
+				Code:            "v2026.01.3.3",
+				Version:         "2026.01.3.3",
+				TagName:         "v2026.01.3.3",
+				TerrariaVersion: "1.4.4",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
+				PublishedAt:     "2026-03-19T01:43:34Z",
+				Prerelease:      false,
+				Recommended:     true,
+			},
+		}
+	}
+	defer resp.Body.Close()
+
+	var releases []struct {
+		TagName     string `json:"tag_name"`
+		Name        string `json:"name"`
+		Prerelease  bool   `json:"prerelease"`
+		PublishedAt string `json:"published_at"`
+		Assets      []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return []TModLoaderReleaseInfo{
+			{
+				Version:         "2026.01.3.3",
+				TagName:         "v2026.01.3.3",
+				TerrariaVersion: "1.4.4",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
+				PublishedAt:     "2026-03-19T01:43:34Z",
+				Prerelease:      false,
+				Recommended:     true,
+			},
+		}
+	}
+
+	options := make([]TModLoaderReleaseInfo, 0, len(releases))
+	recommendedAssigned := false
+	for _, release := range releases {
+		bestAsset := ""
+		for _, asset := range release.Assets {
+			name := strings.ToLower(asset.Name)
+			if strings.Contains(name, "example") || strings.Contains(name, "source") {
+				continue
+			}
+			if name == "tmodloader.zip" ||
+				(strings.Contains(name, "tmodloader") && strings.HasSuffix(name, ".zip")) {
+				bestAsset = asset.BrowserDownloadURL
+				break
+			}
+		}
+		if bestAsset == "" {
+			continue
+		}
+
+		version := strings.TrimPrefix(release.TagName, "v")
+		info := TModLoaderReleaseInfo{
+			Code:            release.TagName,
+			Version:         version,
+			TagName:         release.TagName,
+			TerrariaVersion: extractTModLoaderTerrariaVersion(release.Name),
+			DownloadURL:     bestAsset,
+			PublishedAt:     release.PublishedAt,
+			Prerelease:      release.Prerelease,
+			Recommended:     false,
+		}
+		if !release.Prerelease && !recommendedAssigned {
+			info.Recommended = true
+			recommendedAssigned = true
+		}
+		options = append(options, info)
+	}
+
+	if len(options) == 0 {
+		return []TModLoaderReleaseInfo{
+			{
+				Code:            "v2026.01.3.3",
+				Version:         "2026.01.3.3",
+				TagName:         "v2026.01.3.3",
+				TerrariaVersion: "1.4.4",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
+				PublishedAt:     "2026-03-19T01:43:34Z",
+				Prerelease:      false,
+				Recommended:     true,
+			},
+		}
+	}
+
+	return options
+}
+
+func resolveTModLoaderReleaseOption(versionOrTag string) (TModLoaderReleaseInfo, bool) {
+	normalized := strings.TrimSpace(versionOrTag)
+	options := getTModLoaderReleaseOptions()
+	if normalized == "" {
+		for _, option := range options {
+			if option.Recommended {
+				return option, true
+			}
+		}
+		if len(options) > 0 {
+			return options[0], true
+		}
+		return TModLoaderReleaseInfo{}, false
+	}
+
+	for _, option := range options {
+		if option.Version == normalized || option.TagName == normalized {
+			return option, true
+		}
+	}
+	return TModLoaderReleaseInfo{}, false
 }
 func getLatestTShockRelease() (string, string) {
 	info := getLatestTShock5ReleaseInfo()

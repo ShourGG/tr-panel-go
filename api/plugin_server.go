@@ -1,7 +1,9 @@
 package api
+
 import (
 	"database/sql"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net"
@@ -16,9 +18,10 @@ import (
 	"terraria-panel/services"
 	"terraria-panel/utils"
 	"time"
-	"github.com/gin-gonic/gin"
 )
+
 var pluginServerService *services.PluginServerService
+
 func SetPluginServerService(service *services.PluginServerService) {
 	pluginServerService = service
 }
@@ -40,14 +43,14 @@ func GetPluginServer(c *gin.Context) {
 			pluginServer.PID = 0
 		}
 	}
-	configComplete := isConfigurationComplete(pluginServer)
+	configComplete := isBootstrapConfigurationComplete(pluginServer)
 	response := gin.H{
 		"success":        true,
 		"data":           pluginServer,
 		"configComplete": configComplete,
 		"serverIp":       getServerIP(),
 		"logSize":        getLogFileSize(),
-		"tshockVersion": getTShockVersion(),
+		"tshockVersion":  getTShockVersion(),
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -148,10 +151,7 @@ func getTShockVersion() string {
 	}
 	return "未知版本"
 }
-func isConfigurationComplete(ps *models.PluginServer) bool {
-	if ps.ServerName == "" {
-		return false
-	}
+func isBootstrapConfigurationComplete(ps *models.PluginServer) bool {
 	if ps.Port < 1024 || ps.Port > 65535 {
 		return false
 	}
@@ -172,6 +172,13 @@ func isConfigurationComplete(ps *models.PluginServer) bool {
 	}
 	return true
 }
+
+func isFullConfigurationComplete(ps *models.PluginServer) bool {
+	if !isBootstrapConfigurationComplete(ps) {
+		return false
+	}
+	return strings.TrimSpace(ps.ServerName) != ""
+}
 func StartPluginServer(c *gin.Context) {
 	log.Printf("[INFO] Starting plugin server...")
 	pluginServer, err := pluginServerService.GetPluginServer()
@@ -185,9 +192,14 @@ func StartPluginServer(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Plugin server not found"))
 		return
 	}
-	if !isConfigurationComplete(pluginServer) {
+	configPath := filepath.Join(config.ServersDir, "tshock", "config.json")
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		configExists = true
+	}
+	if !isBootstrapConfigurationComplete(pluginServer) {
 		log.Printf("[WARN] Plugin server configuration is incomplete")
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("请先完成插件服配置。点击「快速设置」按钮配置服务器参数。"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请先完成插件服初始化参数配置，再启动插件服。"))
 		return
 	}
 	if p, exists := utils.GetProcess(0); exists && p.IsRunning() {
@@ -244,36 +256,30 @@ func StartPluginServer(c *gin.Context) {
 		return
 	}
 	log.Printf("[INFO] TShock executable found: %s (Size: %d bytes)", exePath, fileInfo.Size())
-	configPath := filepath.Join(globalTshockDir, "config.json")
 	if err := os.MkdirAll(globalTshockDir, 0755); err != nil {
 		log.Printf("[ERROR] Failed to create tshock directory: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create config directory: "+err.Error()))
 		return
 	}
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		log.Printf("[INFO] Config file not found, will be initialized: %s", configPath)
-		if err := pluginServerService.InitializeConfigFile(); err != nil {
-			log.Printf("[ERROR] Failed to initialize config file: %v", err)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to initialize config file: "+err.Error()))
+	if configExists {
+		log.Printf("[INFO] Config file exists: %s", configPath)
+		log.Printf("[INFO] Syncing database configuration to config.json...")
+		if err := pluginServerService.SyncDatabaseToConfigFile(pluginServer); err != nil {
+			log.Printf("[ERROR] Failed to sync configuration: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to sync configuration: "+err.Error()))
 			return
 		}
-		log.Printf("[INFO] Config file initialized successfully")
+		log.Printf("[INFO] Configuration synced successfully")
+		log.Printf("[INFO] Enabling REST API...")
+		configService := services.NewConfigService(globalTshockDir)
+		if err := configService.EnableRESTAPI(); err != nil {
+			log.Printf("[WARN] Failed to enable REST API: %v (continuing anyway)", err)
+		} else {
+			log.Printf("[INFO] REST API enabled successfully")
+		}
 	} else {
-		log.Printf("[INFO] Config file exists: %s", configPath)
-	}
-	log.Printf("[INFO] Syncing database configuration to config.json...")
-	if err := pluginServerService.SyncDatabaseToConfigFile(pluginServer); err != nil {
-		log.Printf("[ERROR] Failed to sync configuration: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to sync configuration: "+err.Error()))
-		return
-	}
-	log.Printf("[INFO] Configuration synced successfully")
-	log.Printf("[INFO] Enabling REST API...")
-	configService := services.NewConfigService(globalTshockDir)
-	if err := configService.EnableRESTAPI(); err != nil {
-		log.Printf("[WARN] Failed to enable REST API: %v (continuing anyway)", err)
-	} else {
-		log.Printf("[INFO] REST API enabled successfully")
+		log.Printf("[INFO] Config file not found, starting with official first-run flow: %s", configPath)
+		log.Printf("[INFO] Skipping template initialization and config sync before first start")
 	}
 	pluginServerDir := filepath.Join(config.DataDir, "plugin-server")
 	worldPath := filepath.Join(pluginServerDir, pluginServer.WorldFile)
@@ -291,6 +297,8 @@ func StartPluginServer(c *gin.Context) {
 		args = []string{
 			exePath,
 			"-lang", "7",
+			"-port", strconv.Itoa(pluginServer.Port),
+			"-maxplayers", strconv.Itoa(pluginServer.MaxPlayers),
 			"-configpath", globalTshockDir,
 			"-worldpath", pluginServerDir,
 			"-world", worldPath,
@@ -299,6 +307,8 @@ func StartPluginServer(c *gin.Context) {
 		cmdName = exePath
 		args = []string{
 			"-lang", "7",
+			"-port", strconv.Itoa(pluginServer.Port),
+			"-maxplayers", strconv.Itoa(pluginServer.MaxPlayers),
 			"-configpath", globalTshockDir,
 			"-worldpath", pluginServerDir,
 			"-world", worldPath,
@@ -340,7 +350,7 @@ func StartPluginServer(c *gin.Context) {
 [%s] 服务器名称: %s
 [%s] 世界文件: %s
 ================================================================================
-`, startTime, startTime, startTime, startTime, pluginServer.Port, startTime, pluginServer.MaxPlayers, 
+`, startTime, startTime, startTime, startTime, pluginServer.Port, startTime, pluginServer.MaxPlayers,
 		startTime, pluginServer.ServerName, startTime, pluginServer.WorldFile)
 	if _, err := logWriter.WriteString(startMarker); err != nil {
 		log.Printf("[WARN] Failed to write start marker to log: %v", err)
