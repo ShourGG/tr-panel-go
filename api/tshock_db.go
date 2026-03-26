@@ -1,15 +1,25 @@
 package api
+
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
+	"terraria-panel/config"
 	"terraria-panel/services"
 	"time"
+
 	"github.com/gin-gonic/gin"
 	_ "github.com/glebarez/go-sqlite"
+	"golang.org/x/crypto/bcrypt"
 )
+
+var tshockUniqueUsernameErrorPattern = regexp.MustCompile(`Username.*not unique|UNIQUE constraint failed: Users\.Username`)
+
 func getTShockDBPath() string {
 	storageType, dbPath, _, _ := getTShockStorageInfo()
 	if storageType == "sqlite" && dbPath != "" {
@@ -24,6 +34,7 @@ func fileExists(path string) bool {
 	}
 	return !info.IsDir()
 }
+
 type TShockUser struct {
 	ID           int    `json:"id"`
 	Username     string `json:"username"`
@@ -35,12 +46,12 @@ type TShockUser struct {
 	KnownIPs     string `json:"knownIPs"`
 }
 type TShockBan struct {
-	TicketNumber int    `json:"ticketNumber"`
-	Identifier   string `json:"identifier"`
-	Reason       string `json:"reason"`
-	BanningUser  string `json:"banningUser"`
-	Date         int64  `json:"date"`
-	Expiration   int64  `json:"expiration"`
+	TicketNumber  int    `json:"ticketNumber"`
+	Identifier    string `json:"identifier"`
+	Reason        string `json:"reason"`
+	BanningUser   string `json:"banningUser"`
+	Date          int64  `json:"date"`
+	Expiration    int64  `json:"expiration"`
 	DateStr       string `json:"dateStr"`
 	ExpirationStr string `json:"expirationStr"`
 	IsActive      bool   `json:"isActive"`
@@ -73,6 +84,7 @@ type TShockLog struct {
 	Command  string `json:"command"`
 	Date     string `json:"date"`
 }
+
 func GetTShockUsers(c *gin.Context) {
 	db, _, ok := openReadyTShockSQLite(c)
 	if !ok {
@@ -116,7 +128,7 @@ func GetTShockUsers(c *gin.Context) {
 	users := []TShockUser{}
 	for rows.Next() {
 		var user TShockUser
-		err := rows.Scan(&user.ID, &user.Username, &user.Password, &user.UUID, 
+		err := rows.Scan(&user.ID, &user.Username, &user.Password, &user.UUID,
 			&user.Usergroup, &user.Registered, &user.LastAccessed, &user.KnownIPs)
 		if err != nil {
 			continue
@@ -126,9 +138,9 @@ func GetTShockUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"users": users,
-			"total": total,
-			"page":  page,
+			"users":    users,
+			"total":    total,
+			"page":     page,
 			"pageSize": pageSize,
 		},
 	})
@@ -176,7 +188,7 @@ func GetTShockBans(c *gin.Context) {
 	bans := []TShockBan{}
 	for rows.Next() {
 		var ban TShockBan
-		err := rows.Scan(&ban.TicketNumber, &ban.Identifier, &ban.Reason, 
+		err := rows.Scan(&ban.TicketNumber, &ban.Identifier, &ban.Reason,
 			&ban.BanningUser, &ban.Date, &ban.Expiration)
 		if err != nil {
 			continue
@@ -234,8 +246,8 @@ func GetTShockRegions(c *gin.Context) {
 	regions := []TShockRegion{}
 	for rows.Next() {
 		var region TShockRegion
-		err := rows.Scan(&region.ID, &region.Name, &region.X, &region.Y, 
-			&region.Width, &region.Height, &region.Z, &region.Owner, 
+		err := rows.Scan(&region.ID, &region.Name, &region.X, &region.Y,
+			&region.Width, &region.Height, &region.Z, &region.Owner,
 			&region.Groups, &region.Users, &region.Locked)
 		if err != nil {
 			continue
@@ -373,6 +385,134 @@ func UpdateTShockUser(c *gin.Context) {
 		"message": "更新成功",
 	})
 }
+
+func getTShockPasswordPolicy() (minLength int, workFactor int) {
+	minLength = 4
+	workFactor = 7
+
+	configPath := filepath.Join(config.ServersDir, "tshock", "config.json")
+	if !fileExists(configPath) {
+		return minLength, workFactor
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return minLength, workFactor
+	}
+
+	var snapshot struct {
+		Settings struct {
+			MinimumPasswordLength int `json:"MinimumPasswordLength"`
+			BCryptWorkFactor      int `json:"BCryptWorkFactor"`
+		} `json:"Settings"`
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return minLength, workFactor
+	}
+
+	if snapshot.Settings.MinimumPasswordLength > minLength {
+		minLength = snapshot.Settings.MinimumPasswordLength
+	}
+
+	if snapshot.Settings.BCryptWorkFactor >= bcrypt.MinCost && snapshot.Settings.BCryptWorkFactor <= bcrypt.MaxCost {
+		workFactor = snapshot.Settings.BCryptWorkFactor
+	}
+
+	return minLength, workFactor
+}
+
+func CreateTShockUser(c *gin.Context) {
+	db, _, ok := openReadyTShockSQLite(c)
+	if !ok {
+		return
+	}
+	defer db.Close()
+
+	var req struct {
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		UUID      string `json:"uuid"`
+		Usergroup string `json:"usergroup"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "参数错误: " + err.Error()})
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	req.Password = strings.TrimSpace(req.Password)
+	req.UUID = strings.TrimSpace(req.UUID)
+	req.Usergroup = strings.TrimSpace(req.Usergroup)
+
+	if req.Username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "用户名不能为空"})
+		return
+	}
+	if len(req.Username) > 32 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "用户名不能超过 32 个字符"})
+		return
+	}
+	if req.Usergroup == "" {
+		req.Usergroup = "default"
+	}
+
+	minPasswordLength, workFactor := getTShockPasswordPolicy()
+	if len([]rune(req.Password)) < minPasswordLength {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "密码长度不足，至少需要 " + strconv.Itoa(minPasswordLength) + " 个字符",
+		})
+		return
+	}
+
+	var existingUserCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM Users").Scan(&existingUserCount); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "读取用户数量失败: " + err.Error()})
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), workFactor)
+	if err != nil {
+		hashedPassword, err = bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "生成密码哈希失败: " + err.Error()})
+			return
+		}
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO Users (Username, Password, UUID, UserGroup, Registered) VALUES (?, ?, ?, ?, ?)",
+		req.Username,
+		string(hashedPassword),
+		req.UUID,
+		req.Usergroup,
+		time.Now().UTC().Format("2006-01-02T15:04:05"),
+	)
+	if err != nil {
+		if tshockUniqueUsernameErrorPattern.MatchString(err.Error()) {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "该用户名已存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "创建用户失败: " + err.Error()})
+		return
+	}
+
+	message := "TShock 用户创建成功"
+	if existingUserCount == 0 {
+		message = "首个 TShock 管理员已创建成功"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": message,
+		"data": gin.H{
+			"username":  req.Username,
+			"usergroup": req.Usergroup,
+			"firstUser": existingUserCount == 0,
+		},
+	})
+}
+
 func DeleteTShockUser(c *gin.Context) {
 	db, _, ok := openReadyTShockSQLite(c)
 	if !ok {
@@ -425,13 +565,13 @@ func AddTShockBan(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	dateTicksSince1970 := int64(now.Unix() * 10000000) + 621355968000000000
+	dateTicksSince1970 := int64(now.Unix()*10000000) + 621355968000000000
 	var expirationTicks int64
 	if req.Duration == 0 {
 		expirationTicks = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC).Unix() * 10000000
 	} else {
 		expirationTime := now.Add(time.Duration(req.Duration) * time.Minute)
-		expirationTicks = int64(expirationTime.Unix() * 10000000) + 621355968000000000
+		expirationTicks = int64(expirationTime.Unix()*10000000) + 621355968000000000
 	}
 	_, err := db.Exec("INSERT INTO PlayerBans (Identifier, Reason, BanningUser, Date, Expiration) VALUES (?, ?, ?, ?, ?)",
 		req.Identifier, req.Reason, req.BanningUser, dateTicksSince1970, expirationTicks)
