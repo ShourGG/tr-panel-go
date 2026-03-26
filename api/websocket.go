@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"terraria-panel/middleware"
 	wshandler "terraria-panel/websocket"
 )
 
@@ -28,6 +29,30 @@ var wsManager = &WebSocketManager{
 	broadcast:  make(chan []byte, 256),
 	register:   make(chan *websocket.Conn),
 	unregister: make(chan *websocket.Conn),
+}
+
+func authorizeWebSocketRequest(c *gin.Context) bool {
+	if !isOriginAllowed(c.GetHeader("Origin")) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "不允许的来源"})
+		return false
+	}
+
+	tokenString := middleware.ExtractWebSocketToken(c.Request)
+	if tokenString == "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "缺少 WebSocket 认证令牌"})
+		return false
+	}
+
+	claims, err := middleware.ParseAndValidateToken(tokenString)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "无效的 WebSocket 认证令牌"})
+		return false
+	}
+
+	c.Set("user_id", claims.UserID)
+	c.Set("username", claims.Username)
+	c.Set("role", claims.Role)
+	return true
 }
 
 func (manager *WebSocketManager) Run() {
@@ -61,6 +86,10 @@ func (manager *WebSocketManager) Run() {
 	}
 }
 func HandleWebSocket(c *gin.Context) {
+	if !authorizeWebSocketRequest(c) {
+		return
+	}
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[WebSocket] 升级失败: %v", err)
@@ -99,5 +128,9 @@ func init() {
 	log.Println("[WebSocket] 管理器已启动")
 }
 func HandleRoomLogsWS(c *gin.Context) {
+	if !authorizeWebSocketRequest(c) {
+		return
+	}
+
 	wshandler.HandleRoomLogs(c)
 }

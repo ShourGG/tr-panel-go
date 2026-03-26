@@ -146,14 +146,7 @@ func GetRooms(c *gin.Context) {
 		return
 	}
 	for i := range rooms {
-		if p, exists := utils.GetProcess(rooms[i].ID); exists && p.IsRunning() {
-			rooms[i].Status = "running"
-			rooms[i].PID = p.GetPID()
-			roomStorage.UpdateStatus(rooms[i].ID, "running", p.GetPID())
-		} else {
-			rooms[i].Status = "stopped"
-			rooms[i].PID = 0
-		}
+		syncRoomRuntimeState(&rooms[i])
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(rooms))
 }
@@ -228,6 +221,8 @@ func DeleteRoom(c *gin.Context) {
 		log.Printf("[INFO] 停止房间进程: PID=%d", p.GetPID())
 		utils.StopProcess(id)
 	}
+	clearRoomPreparing(id)
+	finalizeRoomPlayerActivity(id)
 	roomDir := filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", room.ID))
 	if err := os.RemoveAll(roomDir); err != nil {
 		log.Printf("[ERROR] 删除房间目录失败: %v", err)
@@ -883,9 +878,16 @@ motd=%s/motd.txt
 		return
 	}
 	log.Printf("[DEBUG] 房间 %d 启动成功，PID: %d", id, process.GetPID())
+	if !worldExists {
+		markRoomPreparing(id)
+		_ = roomStorage.UpdateStatus(id, "preparing", process.GetPID())
+		go captureWorldGenerationProgress(id, logFile, room.ServerType)
+	} else {
+		clearRoomPreparing(id)
+		_ = roomStorage.UpdateStatus(id, "running", process.GetPID())
+	}
 	if room.ServerType == "tshock" {
 		go captureAdminToken(id, logFile)
-		go captureWorldGenerationProgress(id, logFile)
 	}
 	LogRoomStart(id, room.Name, room.ServerType, room.Port)
 	c.JSON(http.StatusOK, models.MessageResponse("房间启动成功"))
@@ -906,6 +908,9 @@ func StopRoom(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("停止失败: "+err.Error()))
 		return
 	}
+	clearRoomPreparing(id)
+	finalizeRoomPlayerActivity(id)
+	_ = roomStorage.UpdateStatus(id, "stopped", 0)
 	LogRoomStop(id, room.Name)
 	c.JSON(http.StatusOK, models.MessageResponse("房间停止成功"))
 }
@@ -926,6 +931,9 @@ func RestartRoom(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("停止失败"))
 			return
 		}
+		clearRoomPreparing(id)
+		finalizeRoomPlayerActivity(id)
+		_ = roomStorage.UpdateStatus(id, "stopped", 0)
 	}
 	StartRoom(c)
 	LogRoomRestart(id, room.Name)
@@ -1022,7 +1030,7 @@ func applyModConfigToRoom(roomID int, modProfileID string, roomDir string) error
 	log.Printf("[INFO] 文件路径: %s", enabledJsonPath)
 	return nil
 }
-func captureWorldGenerationProgress(roomID int, logFilePath string) {
+func captureWorldGenerationProgress(roomID int, logFilePath string, serverType string) {
 	log.Printf("[INFO] 开始监听房间 %d 的世界生成进度...", roomID)
 	maxRetries := 10
 	var file *os.File
@@ -1063,7 +1071,6 @@ func captureWorldGenerationProgress(roomID int, logFilePath string) {
 		"正在放置生命水晶": "放置生命水晶",
 		"正在放置祭坛":   "放置祭坛",
 		"世界生成完成":   "世界生成完成",
-		"服务器已启动":   "服务器启动完成",
 	}
 	log.Printf("[INFO] 开始持续监听世界生成进度: %s", logFilePath)
 	for {
@@ -1092,14 +1099,37 @@ func captureWorldGenerationProgress(roomID int, logFilePath string) {
 				if jsonData, err := json.Marshal(progressMsg); err == nil {
 					BroadcastMessage(jsonData)
 				}
-				if keyword == "服务器已启动" {
-					log.Printf("[INFO] 房间 %d 世界生成完成，停止监听进度", roomID)
-					return
-				}
 				break
 			}
 		}
+
+		if containsAnyKeyword(line, roomReadyKeywords) {
+			log.Printf("[INFO] 房间 %d 检测到启动完成关键字，准备状态结束（类型：%s）", roomID, serverType)
+			promotePreparingRoomToRunning(roomID)
+
+			progressMsg := map[string]interface{}{
+				"type":     "world_generation_progress",
+				"roomId":   roomID,
+				"progress": "服务器启动完成",
+				"message":  "🌍 世界准备完成，服务器可连接",
+			}
+			if jsonData, err := json.Marshal(progressMsg); err == nil {
+				BroadcastMessage(jsonData)
+			}
+
+			return
+		}
 	}
+
+	if isRoomPreparing(roomID) {
+		if process, exists := utils.GetProcess(roomID); exists && process.IsRunning() {
+			log.Printf("[WARN] 房间 %d 世界生成进度监听超时，按兜底策略切换为运行中", roomID)
+			promotePreparingRoomToRunning(roomID)
+		} else {
+			clearRoomPreparing(roomID)
+		}
+	}
+
 	log.Printf("[INFO] 房间 %d 世界生成进度监听结束", roomID)
 }
 func captureAdminToken(roomID int, logFilePath string) {

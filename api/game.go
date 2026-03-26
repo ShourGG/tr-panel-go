@@ -87,6 +87,13 @@ type ActiveGameTask struct {
 }
 
 var numericVersionRegexp = regexp.MustCompile(`\d+`)
+var tModLoaderReleaseCacheTTL = 30 * time.Minute
+
+var tModLoaderReleaseCache = struct {
+	sync.RWMutex
+	options   []TModLoaderReleaseInfo
+	fetchedAt time.Time
+}{}
 
 var supportedVanillaVersionCodes = []string{
 	"1456", "1455", "1454", "1453", "1452", "1451", "1450",
@@ -284,41 +291,41 @@ func GetGameInstallInfo(c *gin.Context) {
 			"os":          osType,
 			"activeTasks": activeTasks,
 			"vanilla": gin.H{
-				"name":             "Terraria 原版服务器",
-				"version":          vanillaRecommended.Version,
-				"path":             filepath.Join(config.ServersDir, "vanilla"),
-				"downloadUrl":      vanillaRecommended.DownloadURL,
-				"size":             "约 40 MB",
-				"installed":        vanillaInstalled,
-				"installedVersion": vanillaInstalledVersion,
-				"latestVersion":    vanillaRecommended.Version,
-				"updateAvailable":  vanillaInstalled && isGameUpdateAvailable(vanillaInstalledVersion, vanillaRecommended.Version),
-				"updateSupported":  true,
-				"updateChannel":    "vanilla",
-				"terrariaVersion":  vanillaRecommended.Version,
-				"publishedAt":      latestVanillaPublishedAt,
-				"availableVersions": vanillaVersions,
-				"recommendedVersion": vanillaRecommended.Version,
+				"name":                   "Terraria 原版服务器",
+				"version":                vanillaRecommended.Version,
+				"path":                   filepath.Join(config.ServersDir, "vanilla"),
+				"downloadUrl":            vanillaRecommended.DownloadURL,
+				"size":                   "约 40 MB",
+				"installed":              vanillaInstalled,
+				"installedVersion":       vanillaInstalledVersion,
+				"latestVersion":          vanillaRecommended.Version,
+				"updateAvailable":        vanillaInstalled && isGameUpdateAvailable(vanillaInstalledVersion, vanillaRecommended.Version),
+				"updateSupported":        true,
+				"updateChannel":          "vanilla",
+				"terrariaVersion":        vanillaRecommended.Version,
+				"publishedAt":            latestVanillaPublishedAt,
+				"availableVersions":      vanillaVersions,
+				"recommendedVersion":     vanillaRecommended.Version,
 				"recommendedVersionCode": vanillaRecommended.Code,
 			},
 			"tmodloader": gin.H{
-				"name":             "tModLoader 服务器",
-				"version":          tmodRecommended.Version,
-				"path":             filepath.Join(config.ServersDir, "tModLoader"),
-				"downloadUrl":      tmodRecommended.DownloadURL,
-				"size":             "约 50 MB",
-				"installed":        tmodInstalled,
-				"installedVersion": tmodInstalledVersion,
-				"latestVersion":    tmodRecommended.Version,
-				"updateAvailable":  tmodInstalled && isGameUpdateAvailable(tmodInstalledVersion, tmodRecommended.Version),
-				"updateSupported":  true,
-				"updateChannel":    "tmodloader",
-				"requiresNet":      "8.0",
-				"terrariaVersion":  tmodRecommended.TerrariaVersion,
-				"publishedAt":      tmodRecommended.PublishedAt,
-				"prerelease":       tmodRecommended.Prerelease,
-				"availableVersions": tmodVersions,
-				"recommendedVersion": tmodRecommended.Version,
+				"name":                   "tModLoader 服务器",
+				"version":                tmodRecommended.Version,
+				"path":                   filepath.Join(config.ServersDir, "tModLoader"),
+				"downloadUrl":            tmodRecommended.DownloadURL,
+				"size":                   "约 50 MB",
+				"installed":              tmodInstalled,
+				"installedVersion":       tmodInstalledVersion,
+				"latestVersion":          tmodRecommended.Version,
+				"updateAvailable":        tmodInstalled && isGameUpdateAvailable(tmodInstalledVersion, tmodRecommended.Version),
+				"updateSupported":        true,
+				"updateChannel":          "tmodloader",
+				"requiresNet":            "8.0",
+				"terrariaVersion":        tmodRecommended.TerrariaVersion,
+				"publishedAt":            tmodRecommended.PublishedAt,
+				"prerelease":             tmodRecommended.Prerelease,
+				"availableVersions":      tmodVersions,
+				"recommendedVersion":     tmodRecommended.Version,
 				"recommendedVersionCode": tmodRecommended.TagName,
 			},
 			"tshock5": gin.H{
@@ -1644,7 +1651,7 @@ func createGameUpdateBackup(gameType, sourceDir, fromVersion string) (string, er
 	zipWriter := zip.NewWriter(zipFile)
 	defer zipWriter.Close()
 
-	if err := addDirToZip(zipWriter, sourceDir, filepath.Base(sourceDir)); err != nil {
+	if err := utils.AddDirToZip(zipWriter, sourceDir, filepath.Base(sourceDir)); err != nil {
 		return "", err
 	}
 
@@ -1901,9 +1908,21 @@ func getLatestTModLoaderRelease() (string, string) {
 }
 
 func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
-	apiURL := "https://api.github.com/repos/tModLoader/tModLoader/releases?per_page=12"
+	tModLoaderReleaseCache.RLock()
+	cachedOptions := append([]TModLoaderReleaseInfo(nil), tModLoaderReleaseCache.options...)
+	cachedAt := tModLoaderReleaseCache.fetchedAt
+	tModLoaderReleaseCache.RUnlock()
+
+	if len(cachedOptions) > 0 && !cachedAt.IsZero() && time.Since(cachedAt) < tModLoaderReleaseCacheTTL {
+		return cachedOptions
+	}
+
+	apiURL := "https://api.github.com/repos/tModLoader/tModLoader/releases?per_page=30"
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
+		if len(cachedOptions) > 0 {
+			return cachedOptions
+		}
 		return []TModLoaderReleaseInfo{
 			{
 				Code:            "v2026.01.3.3",
@@ -1921,6 +1940,9 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if len(cachedOptions) > 0 {
+			return cachedOptions
+		}
 		return []TModLoaderReleaseInfo{
 			{
 				Code:            "v2026.01.3.3",
@@ -1947,8 +1969,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		if len(cachedOptions) > 0 {
+			return cachedOptions
+		}
 		return []TModLoaderReleaseInfo{
 			{
+				Code:            "v2026.01.3.3",
 				Version:         "2026.01.3.3",
 				TagName:         "v2026.01.3.3",
 				TerrariaVersion: "1.4.4",
@@ -1998,6 +2024,9 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 	}
 
 	if len(options) == 0 {
+		if len(cachedOptions) > 0 {
+			return cachedOptions
+		}
 		return []TModLoaderReleaseInfo{
 			{
 				Code:            "v2026.01.3.3",
@@ -2012,7 +2041,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		}
 	}
 
-	return options
+	tModLoaderReleaseCache.Lock()
+	tModLoaderReleaseCache.options = append([]TModLoaderReleaseInfo(nil), options...)
+	tModLoaderReleaseCache.fetchedAt = time.Now()
+	tModLoaderReleaseCache.Unlock()
+
+	return append([]TModLoaderReleaseInfo(nil), options...)
 }
 
 func resolveTModLoaderReleaseOption(versionOrTag string) (TModLoaderReleaseInfo, bool) {

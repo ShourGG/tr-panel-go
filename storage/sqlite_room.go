@@ -125,8 +125,8 @@ func (s *SQLiteRoomStorage) Delete(id int) error {
 }
 func (s *SQLiteRoomStorage) UpdateStatus(id int, status string, pid int) error {
 	var query string
-	if status == "running" {
-		query = `UPDATE rooms SET status = ?, pid = ?, start_time = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	if status == "running" || status == "preparing" {
+		query = `UPDATE rooms SET status = ?, pid = ?, start_time = COALESCE(start_time, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?`
 	} else {
 		query = `UPDATE rooms SET status = ?, pid = ?, start_time = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
 	}

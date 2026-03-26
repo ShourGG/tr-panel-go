@@ -14,7 +14,6 @@ import (
 	"sync"
 	"terraria-panel/config"
 	"terraria-panel/models"
-	"terraria-panel/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +40,21 @@ var (
 	publicIPSuccessTTL    = 10 * time.Minute
 	publicIPFailureTTL    = 1 * time.Minute
 )
+
+func getInstalledTModLoaderTerrariaVersion() string {
+	version, ok := getInstalledGameVersion("tmodloader")
+	if !ok || strings.TrimSpace(version) == "" {
+		return ""
+	}
+
+	if release, found := resolveTModLoaderReleaseOption(version); found {
+		if terrariaVersion := strings.TrimSpace(release.TerrariaVersion); terrariaVersion != "" {
+			return terrariaVersion
+		}
+	}
+
+	return ""
+}
 
 func InitSystemMonitoring() {
 	updateSystemResources()
@@ -402,7 +416,59 @@ func getConfiguredPublicIP() string {
 	if ip := strings.TrimSpace(os.Getenv("SERVER_IP")); ip != "" {
 		return ip
 	}
+	if ip := getPublicIPFromInterfaces(); ip != "" {
+		return ip
+	}
 	return getPublicIPFromCache()
+}
+
+func isRoutablePublicIP(ip net.IP) bool {
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsMulticast() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+		return false
+	}
+	return true
+}
+
+func getPublicIPFromInterfaces() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	ipv6Fallback := ""
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP == nil {
+				continue
+			}
+
+			ip := ipNet.IP
+			if !isRoutablePublicIP(ip) {
+				continue
+			}
+
+			if ipv4 := ip.To4(); ipv4 != nil {
+				return ipv4.String()
+			}
+
+			if ipv6Fallback == "" {
+				ipv6Fallback = ip.String()
+			}
+		}
+	}
+
+	return ipv6Fallback
 }
 
 func getPublicIPFromCache() string {
@@ -447,7 +513,11 @@ func getPublicIPFromCache() string {
 func detectPublicIP() string {
 	endpoints := []string{
 		"https://api.ipify.org",
+		"https://api64.ipify.org",
 		"https://ifconfig.me/ip",
+		"https://ifconfig.io/ip",
+		"https://ip.sb",
+		"https://ipinfo.io/ip",
 		"https://checkip.amazonaws.com",
 		"https://ipv4.icanhazip.com",
 	}
@@ -545,14 +615,44 @@ func getPanelVersion() string {
 	return info.Main.Version
 }
 
-func getTerrariaVersion(serverType string) string {
+func getServerVersionInfo(serverType string) (string, string) {
 	switch serverType {
-	case "vanilla", "tshock":
-		return "1.4.4.9"
+	case "vanilla":
+		if version, ok := getInstalledGameVersion("vanilla"); ok {
+			return version, version
+		}
+		return "-", "-"
 	case "tmodloader":
-		return "按当前 tModLoader 安装版本"
+		if version, ok := getInstalledGameVersion("tmodloader"); ok {
+			if terrariaVersion := getInstalledTModLoaderTerrariaVersion(); terrariaVersion != "" {
+				return version, terrariaVersion
+			}
+			return version, "由当前 tModLoader 版本决定"
+		}
+		return "-", "-"
+	case "tshock":
+		if version, ok := getInstalledGameVersion("tshock6"); ok {
+			return version, "1.4.5.6"
+		}
+		if version, ok := getInstalledGameVersion("tshock5"); ok {
+			return version, "1.4.4.9"
+		}
+		return "-", "-"
 	default:
-		return "-"
+		return "-", "-"
+	}
+}
+
+func getServerTypeDisplayName(serverType string) string {
+	switch serverType {
+	case "vanilla":
+		return "原版"
+	case "tmodloader":
+		return "tModLoader"
+	case "tshock":
+		return "TShock"
+	default:
+		return serverType
 	}
 }
 
@@ -561,11 +661,13 @@ func getServerRuntimeInfo() gin.H {
 		"hasRunningServer": false,
 		"runningRoomCount": 0,
 		"serverUptime":     0,
+		"serverVersion":    "-",
 		"terrariaVersion":  "-",
 		"serverType":       "-",
 		"gamePort":         0,
 		"roomName":         "-",
 		"roomId":           0,
+		"runningRooms":     []gin.H{},
 	}
 
 	if roomStorage == nil {
@@ -583,27 +685,45 @@ func getServerRuntimeInfo() gin.H {
 	var selectedServerType string
 	var selectedGamePort int
 	var selectedServerUptime int
+	var selectedServerVersion string
+	var selectedTerrariaVersion string
+	runningRoomItems := make([]gin.H, 0)
 
-	for _, room := range rooms {
-		if p, exists := utils.GetProcess(room.ID); exists && p.IsRunning() {
+	for i := range rooms {
+		room := &rooms[i]
+		if syncRoomRuntimeState(room) {
 			runningRooms++
-
-			if room.Status != "running" || room.PID != p.GetPID() {
-				_ = roomStorage.UpdateStatus(room.ID, "running", p.GetPID())
+			serverVersion, terrariaVersion := getServerVersionInfo(room.ServerType)
+			uptimeSeconds := 0
+			if room.StartTime != nil {
+				seconds := int(time.Since(*room.StartTime).Seconds())
+				if seconds > 0 {
+					uptimeSeconds = seconds
+				}
 			}
+
+			runningRoomItems = append(runningRoomItems, gin.H{
+				"id":               room.ID,
+				"name":             room.Name,
+				"serverType":       room.ServerType,
+				"serverTypeText":   getServerTypeDisplayName(room.ServerType),
+				"gamePort":         room.Port,
+				"uptime":           uptimeSeconds,
+				"serverVersion":    serverVersion,
+				"terrariaVersion":  terrariaVersion,
+				"configuredWorld":  room.WorldFile,
+				"maxPlayers":       room.MaxPlayers,
+				"configuredStatus": room.Status,
+			})
 
 			if selectedRoomID == 0 {
 				selectedRoomID = room.ID
 				selectedRoomName = room.Name
 				selectedServerType = room.ServerType
 				selectedGamePort = room.Port
-
-				if room.StartTime != nil {
-					seconds := int(time.Since(*room.StartTime).Seconds())
-					if seconds > 0 {
-						selectedServerUptime = seconds
-					}
-				}
+				selectedServerUptime = uptimeSeconds
+				selectedServerVersion = serverVersion
+				selectedTerrariaVersion = terrariaVersion
 			}
 		}
 	}
@@ -615,11 +735,13 @@ func getServerRuntimeInfo() gin.H {
 	result["hasRunningServer"] = true
 	result["runningRoomCount"] = runningRooms
 	result["serverUptime"] = selectedServerUptime
-	result["terrariaVersion"] = getTerrariaVersion(selectedServerType)
+	result["serverVersion"] = selectedServerVersion
+	result["terrariaVersion"] = selectedTerrariaVersion
 	result["serverType"] = selectedServerType
 	result["gamePort"] = selectedGamePort
 	result["roomName"] = selectedRoomName
 	result["roomId"] = selectedRoomID
+	result["runningRooms"] = runningRoomItems
 
 	return result
 }
@@ -661,11 +783,13 @@ func GetSystemInfo(c *gin.Context) {
 		"hasRunningServer": serverInfo["hasRunningServer"],
 		"runningRoomCount": serverInfo["runningRoomCount"],
 		"serverUptime":     serverInfo["serverUptime"],
+		"serverVersion":    serverInfo["serverVersion"],
 		"terrariaVersion":  serverInfo["terrariaVersion"],
 		"serverType":       serverInfo["serverType"],
 		"gamePort":         serverInfo["gamePort"],
 		"roomName":         serverInfo["roomName"],
 		"roomId":           serverInfo["roomId"],
+		"runningRooms":     serverInfo["runningRooms"],
 		"goroutine":        runtime.NumGoroutine(),
 		"goMemory": gin.H{
 			"alloc":      m.Alloc / 1024 / 1024,
@@ -720,8 +844,8 @@ func GetSystemInfoDetail(c *gin.Context) {
 
 func GetPanelStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"startedAt": panelStartedAt.Format(time.RFC3339Nano),
+		"startedAt":     panelStartedAt.Format(time.RFC3339Nano),
 		"startedAtUnix": panelStartedAt.Unix(),
-		"now": time.Now().UTC().Format(time.RFC3339Nano),
+		"now":           time.Now().UTC().Format(time.RFC3339Nano),
 	}))
 }

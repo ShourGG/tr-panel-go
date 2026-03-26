@@ -4,9 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,40 +53,10 @@ func GetPluginServer(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 func getServerIP() string {
-	if ip := os.Getenv("SERVER_IP"); ip != "" {
-		return ip
-	}
-	if publicIP := getPublicIP(); publicIP != "" {
+	if publicIP := getConfiguredPublicIP(); publicIP != "" && publicIP != "-" {
 		return publicIP
 	}
 	return "未配置公网IP"
-}
-func getPublicIP() string {
-	apis := []string{
-		"https://api.ipify.org",
-		"https://ifconfig.me",
-		"https://icanhazip.com",
-	}
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-	}
-	for _, api := range apis {
-		resp, err := client.Get(api)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			body, err := io.ReadAll(resp.Body)
-			if err == nil {
-				ip := strings.TrimSpace(string(body))
-				if net.ParseIP(ip) != nil {
-					return ip
-				}
-			}
-		}
-	}
-	return ""
 }
 func getLogFileSize() string {
 	logsDir := filepath.Join(config.ServersDir, "tshock", "logs")

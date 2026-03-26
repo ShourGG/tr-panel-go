@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -31,6 +32,56 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+func ExtractBearerToken(authHeader string) (string, error) {
+	authHeader = strings.TrimSpace(authHeader)
+	if authHeader == "" {
+		return "", errors.New("missing token")
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", errors.New("invalid token format")
+	}
+
+	tokenString := strings.TrimSpace(parts[1])
+	if tokenString == "" {
+		return "", errors.New("missing token")
+	}
+
+	return tokenString, nil
+}
+
+func ParseAndValidateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&Claims{},
+		func(token *jwt.Token) (interface{}, error) {
+			return jwtSecret, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(tokenIssuer),
+		jwt.WithLeeway(5*time.Second),
+	)
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok {
+		return nil, errors.New("invalid token claims")
+	}
+
+	return claims, nil
+}
+
+func ExtractWebSocketToken(r *http.Request) string {
+	if tokenString, err := ExtractBearerToken(r.Header.Get("Authorization")); err == nil {
+		return tokenString
+	}
+
+	return strings.TrimSpace(r.URL.Query().Get("token"))
+}
+
 func GenerateToken(user *models.User) (string, error) {
 	now := time.Now()
 	claims := Claims{
@@ -51,39 +102,23 @@ func GenerateToken(user *models.User) (string, error) {
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		tokenString, err := ExtractBearerToken(c.GetHeader("Authorization"))
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少认证令牌"})
 			c.Abort()
 			return
 		}
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "认证令牌格式错误"})
-			c.Abort()
-			return
-		}
-		tokenString := parts[1]
-		token, err := jwt.ParseWithClaims(
-			tokenString,
-			&Claims{},
-			func(token *jwt.Token) (interface{}, error) {
-				return jwtSecret, nil
-			},
-			jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-			jwt.WithIssuer(tokenIssuer),
-			jwt.WithLeeway(5*time.Second),
-		)
-		if err != nil || !token.Valid {
+
+		claims, err := ParseAndValidateToken(tokenString)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的认证令牌"})
 			c.Abort()
 			return
 		}
-		if claims, ok := token.Claims.(*Claims); ok {
-			c.Set("user_id", claims.UserID)
-			c.Set("username", claims.Username)
-			c.Set("role", claims.Role)
-		}
+
+		c.Set("user_id", claims.UserID)
+		c.Set("username", claims.Username)
+		c.Set("role", claims.Role)
 		c.Next()
 	}
 }

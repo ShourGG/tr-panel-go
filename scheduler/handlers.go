@@ -1,4 +1,5 @@
 package scheduler
+
 import (
 	"fmt"
 	"io/ioutil"
@@ -6,15 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
 	"terraria-panel/config"
 	"terraria-panel/storage"
 	"terraria-panel/utils"
-	"time"
-	"archive/zip"
 )
+
 type BackupHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewBackupHandler(roomStorage storage.RoomStorage) BackupHandler {
 	return &BackupHandlerImpl{
 		roomStorage: roomStorage,
@@ -26,63 +29,27 @@ func (h *BackupHandlerImpl) CreateBackup(roomID int, backupType string, note str
 	if err != nil {
 		return fmt.Errorf("failed to get room: %w", err)
 	}
-	timestamp := time.Now().Format("20060102_150405")
-	zipName := fmt.Sprintf("room-%d_%s_%s.zip", room.ID, room.Name, timestamp)
+	createdAt := time.Now()
+	zipName := utils.BuildBackupArchiveName(room.ID, room.Name, createdAt)
 	zipPath := filepath.Join(config.BackupDir, zipName)
 	log.Printf("[BackupHandler] Creating backup file: %s", zipName)
-	zipFile, err := os.Create(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to create ZIP file: %w", err)
-	}
-	defer zipFile.Close()
-	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
 	roomDir := filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", room.ID))
 	if _, err := os.Stat(roomDir); os.IsNotExist(err) {
 		return fmt.Errorf("room directory does not exist: %s", roomDir)
 	}
-	if err := addDirToZip(zipWriter, roomDir, ""); err != nil {
-		return fmt.Errorf("failed to add room directory to ZIP: %w", err)
+
+	manifest := utils.NewBackupManifest(room.ID, room.Name, room.ServerType, room.WorldFile, backupType, note, createdAt)
+	if err := utils.CreateBackupArchive(zipPath, roomDir, manifest); err != nil {
+		return fmt.Errorf("failed to create ZIP file: %w", err)
 	}
 	log.Printf("[BackupHandler] Backup created successfully: %s", zipName)
 	return nil
 }
-func addDirToZip(zipWriter *zip.Writer, sourceDir string, baseInZip string) error {
-	entries, err := os.ReadDir(sourceDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		sourcePath := filepath.Join(sourceDir, entry.Name())
-		zipPath := filepath.Join(baseInZip, entry.Name())
-		if entry.IsDir() {
-			if err := addDirToZip(zipWriter, sourcePath, zipPath); err != nil {
-				return err
-			}
-		} else {
-			if err := addFileToZip(zipWriter, sourcePath, zipPath); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-func addFileToZip(zipWriter *zip.Writer, filePath string, zipPath string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	writer, err := zipWriter.Create(zipPath)
-	if err != nil {
-		return err
-	}
-	_, err = file.WriteTo(writer)
-	return err
-}
+
 type RestartHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewRestartHandler(roomStorage storage.RoomStorage) RestartHandler {
 	return &RestartHandlerImpl{
 		roomStorage: roomStorage,
@@ -153,9 +120,11 @@ func (h *RestartHandlerImpl) RestartRoom(roomID int) error {
 	log.Printf("[RestartHandler] Room %d restarted successfully (PID: %d)", roomID, process.GetPID())
 	return nil
 }
+
 type CleanupBackupHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewCleanupBackupHandler(roomStorage storage.RoomStorage) CleanupBackupHandler {
 	return &CleanupBackupHandlerImpl{
 		roomStorage: roomStorage,
@@ -197,9 +166,11 @@ func (h *CleanupBackupHandlerImpl) CleanupOldBackups(roomID int, daysToKeep int)
 	log.Printf("[CleanupBackupHandler] Cleanup completed. Deleted %d old backup files.", deletedCount)
 	return nil
 }
+
 type CleanupLogHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewCleanupLogHandler(roomStorage storage.RoomStorage) CleanupLogHandler {
 	return &CleanupLogHandlerImpl{
 		roomStorage: roomStorage,
@@ -243,9 +214,11 @@ func (h *CleanupLogHandlerImpl) CleanupOldLogs(roomID int, daysToKeep int) error
 	log.Printf("[CleanupLogHandler] Cleanup completed. Deleted %d old log files.", deletedCount)
 	return nil
 }
+
 type BroadcastHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewBroadcastHandler(roomStorage storage.RoomStorage) BroadcastHandler {
 	return &BroadcastHandlerImpl{
 		roomStorage: roomStorage,
@@ -279,9 +252,11 @@ func (h *BroadcastHandlerImpl) SendBroadcast(roomID int, message string) error {
 	log.Printf("[BroadcastHandler] Broadcast sent successfully to room %d", roomID)
 	return nil
 }
+
 type CustomCommandHandlerImpl struct {
 	roomStorage storage.RoomStorage
 }
+
 func NewCustomCommandHandler(roomStorage storage.RoomStorage) CustomCommandHandler {
 	return &CustomCommandHandlerImpl{
 		roomStorage: roomStorage,

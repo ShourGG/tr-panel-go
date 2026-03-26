@@ -1,25 +1,98 @@
 package api
+
 import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"terraria-panel/models"
 	"terraria-panel/storage"
 	"time"
+
 	"github.com/gin-gonic/gin"
 )
+
 var (
 	sessionStorage    storage.PlayerSessionStorage
 	statsStorage      storage.PlayerStatsStorage
 	dailyStatsStorage storage.PlayerDailyStatsStorage
 	statsDB           *sql.DB
 )
+
 func InitStatsStorage(database *sql.DB) {
 	statsDB = database
 	sessionStorage = storage.NewSQLitePlayerSessionStorage(database)
 	statsStorage = storage.NewSQLitePlayerStatsStorage(database)
 	dailyStatsStorage = storage.NewSQLitePlayerDailyStatsStorage(database)
 }
+
+func startOfDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+func startOfWeek(t time.Time) time.Time {
+	dayStart := startOfDay(t)
+	weekday := int(dayStart.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	return dayStart.AddDate(0, 0, -(weekday - 1))
+}
+
+func startOfMonth(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+}
+
+func getActivityStatsInRange(start, end time.Time) (int, int, error) {
+	if statsDB == nil || !end.After(start) {
+		return 0, 0, nil
+	}
+
+	rows, err := statsDB.Query(`
+		SELECT player_id, join_time, leave_time
+		FROM player_sessions
+		WHERE join_time < ? AND COALESCE(leave_time, ?) > ?
+	`, end, end, start)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+
+	activePlayers := make(map[int]struct{})
+	totalPlayTime := 0
+
+	for rows.Next() {
+		var playerID int
+		var joinTime time.Time
+		var leaveTime sql.NullTime
+		if err := rows.Scan(&playerID, &joinTime, &leaveTime); err != nil {
+			return 0, 0, err
+		}
+
+		activePlayers[playerID] = struct{}{}
+
+		effectiveStart := start
+		if joinTime.After(effectiveStart) {
+			effectiveStart = joinTime
+		}
+
+		effectiveEnd := end
+		if leaveTime.Valid && leaveTime.Time.Before(effectiveEnd) {
+			effectiveEnd = leaveTime.Time
+		}
+
+		if effectiveEnd.After(effectiveStart) {
+			totalPlayTime += int(effectiveEnd.Sub(effectiveStart).Seconds())
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	return len(activePlayers), totalPlayTime, nil
+}
+
 func GetStatsOverview(c *gin.Context) {
 	var totalPlayers int
 	err := statsDB.QueryRow("SELECT COUNT(*) FROM players").Scan(&totalPlayers)
@@ -33,36 +106,16 @@ func GetStatsOverview(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get online players"))
 		return
 	}
-	today := time.Now().Format("2006-01-02")
-	var todayActive int
-	query := `
-		SELECT COUNT(DISTINCT player_id)
-		FROM player_sessions
-		WHERE DATE(join_time) = ?
-	`
-	err = statsDB.QueryRow(query, today).Scan(&todayActive)
+	now := time.Now()
+	todayActive, _, err := getActivityStatsInRange(startOfDay(now), now)
 	if err != nil {
 		todayActive = 0
 	}
-	weekAgo := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
-	var weekActive int
-	query = `
-		SELECT COUNT(DISTINCT player_id)
-		FROM player_sessions
-		WHERE DATE(join_time) >= ?
-	`
-	err = statsDB.QueryRow(query, weekAgo).Scan(&weekActive)
+	weekActive, _, err := getActivityStatsInRange(startOfWeek(now), now)
 	if err != nil {
 		weekActive = 0
 	}
-	monthAgo := time.Now().AddDate(0, -1, 0).Format("2006-01-02")
-	var monthActive int
-	query = `
-		SELECT COUNT(DISTINCT player_id)
-		FROM player_sessions
-		WHERE DATE(join_time) >= ?
-	`
-	err = statsDB.QueryRow(query, monthAgo).Scan(&monthActive)
+	monthActive, _, err := getActivityStatsInRange(startOfMonth(now), now)
 	if err != nil {
 		monthActive = 0
 	}
@@ -165,6 +218,7 @@ func GetPlayerList(c *gin.Context) {
 	pageSizeStr := c.DefaultQuery("pageSize", "20")
 	sortBy := c.DefaultQuery("sortBy", "totalPlayTime")
 	order := c.DefaultQuery("order", "desc")
+	search := strings.TrimSpace(c.DefaultQuery("search", ""))
 	page, err := strconv.Atoi(pageStr)
 	if err != nil || page <= 0 {
 		page = 1
@@ -174,6 +228,14 @@ func GetPlayerList(c *gin.Context) {
 		pageSize = 20
 	}
 	offset := (page - 1) * pageSize
+
+	filters := make([]string, 0, 1)
+	filterArgs := make([]interface{}, 0, 1)
+	if search != "" {
+		filters = append(filters, "p.name LIKE ? COLLATE NOCASE")
+		filterArgs = append(filterArgs, "%"+search+"%")
+	}
+
 	query := `
 		SELECT 
 			p.id, p.name, p.ip, p.room_id, p.status, p.is_banned, p.created_at,
@@ -187,6 +249,9 @@ func GetPlayerList(c *gin.Context) {
 		LEFT JOIN rooms r ON p.room_id = r.id
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
 	`
+	if len(filters) > 0 {
+		query += " WHERE " + strings.Join(filters, " AND ")
+	}
 	orderClause := " ORDER BY "
 	switch sortBy {
 	case "totalPlayTime":
@@ -206,14 +271,19 @@ func GetPlayerList(c *gin.Context) {
 		orderClause += " DESC"
 	}
 	query += orderClause + " LIMIT ? OFFSET ?"
+
+	queryArgs := append(append([]interface{}{}, filterArgs...), pageSize, offset)
 	var total int
-	countQuery := `SELECT COUNT(*) FROM players`
-	err = statsDB.QueryRow(countQuery).Scan(&total)
+	countQuery := `SELECT COUNT(*) FROM players p`
+	if len(filters) > 0 {
+		countQuery += " WHERE " + strings.Join(filters, " AND ")
+	}
+	err = statsDB.QueryRow(countQuery, filterArgs...).Scan(&total)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get total count"))
 		return
 	}
-	rows, err := statsDB.Query(query, pageSize, offset)
+	rows, err := statsDB.Query(query, queryArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get players"))
 		return
@@ -265,31 +335,25 @@ func GetTrends(c *gin.Context) {
 		ActivePlayers: []int{},
 		TotalPlayTime: []int{},
 	}
-	if dailyStatsStorage == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(trend))
-		return
-	}
-	dailyStats, err := dailyStatsStorage.GetRecent(days)
-	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(trend))
-		return
-	}
+	now := time.Now()
 	for i := days - 1; i >= 0; i-- {
-		date := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
-		trend.Dates = append(trend.Dates, date)
-		found := false
-		for _, stats := range dailyStats {
-			if stats.Date == date {
-				trend.ActivePlayers = append(trend.ActivePlayers, stats.ActivePlayers)
-				trend.TotalPlayTime = append(trend.TotalPlayTime, stats.TotalPlayTime)
-				found = true
-				break
-			}
+		dayStart := startOfDay(now.AddDate(0, 0, -i))
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		if dayEnd.After(now) {
+			dayEnd = now
 		}
-		if !found {
+		date := dayStart.Format("2006-01-02")
+		trend.Dates = append(trend.Dates, date)
+
+		activePlayers, totalPlayTime, statErr := getActivityStatsInRange(dayStart, dayEnd)
+		if statErr != nil {
 			trend.ActivePlayers = append(trend.ActivePlayers, 0)
 			trend.TotalPlayTime = append(trend.TotalPlayTime, 0)
+			continue
 		}
+
+		trend.ActivePlayers = append(trend.ActivePlayers, activePlayers)
+		trend.TotalPlayTime = append(trend.TotalPlayTime, totalPlayTime)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(trend))
 }
