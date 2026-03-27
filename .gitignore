@@ -30,3 +30,6 @@ Thumbs.db
 *.test
 *.out
 vendor/
+
+# Local helper scripts
+check-anthropic-api.sh
