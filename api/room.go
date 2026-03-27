@@ -229,7 +229,7 @@ func DeleteRoom(c *gin.Context) {
 	} else {
 		log.Printf("[INFO] 房间目录已删除: %s", roomDir)
 	}
-	logFile := filepath.Join(config.LogsDir, fmt.Sprintf("room-%d.log", room.ID))
+	logFile := config.RoomLogFile(room.ID)
 	if err := os.Remove(logFile); err == nil {
 		log.Printf("[INFO] 日志文件已删除: %s", logFile)
 	}
@@ -842,7 +842,7 @@ motd=%s/motd.txt
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("不支持的服务器类型"))
 		return
 	}
-	logFile := filepath.Join(config.LogsDir, fmt.Sprintf("room-%d.log", id))
+	logFile := config.RoomLogFile(id)
 	log.Printf("[DEBUG] 创建日志文件: %s", logFile)
 	logWriter, err := os.Create(logFile)
 	if err != nil {

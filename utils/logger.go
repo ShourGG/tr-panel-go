@@ -1,17 +1,21 @@
 package utils
+
 import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
+	"strconv"
+	"terraria-panel/config"
 	"time"
 )
+
 var panelLogFile *os.File
+
 func InitLogger() error {
-	if err := os.MkdirAll("logs", 0755); err != nil {
+	if err := os.MkdirAll(config.LogsDir, 0755); err != nil {
 		return err
 	}
-	logPath := "logs/panel.log"
+	logPath := config.PanelLogFile()
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -55,9 +59,24 @@ func LogError(format string, v ...interface{}) {
 	}
 }
 func LogServerOutput(roomID, line string) {
-	serverLogDir := filepath.Join("servers", roomID)
-	os.MkdirAll(serverLogDir, 0755)
-	logPath := filepath.Join(serverLogDir, "server.log")
+	roomIDInt, err := strconv.Atoi(roomID)
+	if err != nil {
+		LogError("Failed to parse room log ID: %v", err)
+		return
+	}
+
+	logPath := config.RoomLogFile(roomIDInt)
+	logDir := config.LogsDir
+	if roomIDInt == 0 {
+		logPath = config.PluginServerLogFile()
+		logDir = config.PluginServerLogsDir()
+	}
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		LogError("Failed to create server log directory: %v", err)
+		return
+	}
+
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		LogError("Failed to open server log file: %v", err)

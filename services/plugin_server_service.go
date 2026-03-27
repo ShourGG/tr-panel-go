@@ -56,7 +56,7 @@ func (s *PluginServerService) ensurePluginServerDirectories() error {
 		pluginServerDir,
 		globalTshockDir,
 		globalPluginsDir,
-		filepath.Join(globalTshockDir, "logs"),
+		config.PluginServerLogsDir(),
 		filepath.Join(globalTshockDir, "backups"),
 	}
 	for _, dir := range dirs {

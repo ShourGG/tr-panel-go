@@ -13,7 +13,20 @@ import (
 var (
 	taskStorage storage.TaskStorage
 	taskScheduler *scheduler.Scheduler
+	allowedTaskTypes = map[string]struct{}{
+		"backup":         {},
+		"restart":        {},
+		"cleanup_backup": {},
+		"cleanup_log":    {},
+		"broadcast":      {},
+		"custom_command": {},
+	}
 )
+
+func isAllowedTaskType(taskType string) bool {
+	_, ok := allowedTaskTypes[taskType]
+	return ok
+}
 func InitTaskScheduler(ts storage.TaskStorage, sch *scheduler.Scheduler) {
 	taskStorage = ts
 	taskScheduler = sch
@@ -54,7 +67,7 @@ func CreateTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
 		return
 	}
-	if req.Type != "backup" && req.Type != "restart" {
+	if !isAllowedTaskType(req.Type) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的任务类型"))
 		return
 	}
@@ -117,7 +130,7 @@ func UpdateTask(c *gin.Context) {
 		task.Name = req.Name
 	}
 	if req.Type != "" {
-		if req.Type != "backup" && req.Type != "restart" {
+		if !isAllowedTaskType(req.Type) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的任务类型"))
 			return
 		}

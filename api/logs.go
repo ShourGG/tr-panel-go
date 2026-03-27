@@ -1,17 +1,20 @@
 package api
+
 import (
 	"bufio"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"terraria-panel/config"
 	"terraria-panel/models"
-	"github.com/gin-gonic/gin"
 )
+
 func GetPanelLogs(c *gin.Context) {
 	lines := c.DefaultQuery("lines", "500")
-	logFile := "logs/panel.log"
+	logFile := config.PanelLogFile()
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"logs": []string{"No panel logs yet"},
@@ -31,15 +34,21 @@ func GetServerLogs(c *gin.Context) {
 	roomID := c.Param("id")
 	lines := c.DefaultQuery("lines", "500")
 	logFileName := c.DefaultQuery("file", "")
+
 	var logFile string
 	if roomID == "0" {
 		if logFileName != "" {
-			logFile = filepath.Join(config.ServersDir, "tshock", "logs", logFileName)
+			logFile = filepath.Join(config.PluginServerLogsDir(), logFileName)
 		} else {
-			logFile = filepath.Join(config.ServersDir, "tshock", "logs", "plugin-server.log")
+			logFile = config.PluginServerLogFile()
 		}
 	} else {
-		logFile = filepath.Join("data", "logs", "room-"+roomID+".log")
+		roomIDInt, err := strconv.Atoi(roomID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的房间 ID"))
+			return
+		}
+		logFile = config.RoomLogFile(roomIDInt)
 	}
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -63,7 +72,7 @@ func GetServerLogFiles(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("此功能仅支持插件服"))
 		return
 	}
-	logsDir := filepath.Join(config.ServersDir, "tshock", "logs")
+	logsDir := config.PluginServerLogsDir()
 	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"files": []interface{}{},
@@ -72,13 +81,13 @@ func GetServerLogFiles(c *gin.Context) {
 	}
 	files, err := os.ReadDir(logsDir)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取日志目录失败: " + err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取日志目录失败: "+err.Error()))
 		return
 	}
 	type LogFile struct {
-		Name     string `json:"name"`
-		Size     int64  `json:"size"`
-		ModTime  int64  `json:"modTime"`
+		Name    string `json:"name"`
+		Size    int64  `json:"size"`
+		ModTime int64  `json:"modTime"`
 	}
 	var logFiles []LogFile
 	for _, file := range files {

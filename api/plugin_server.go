@@ -59,7 +59,7 @@ func getServerIP() string {
 	return "未配置公网IP"
 }
 func getLogFileSize() string {
-	logsDir := filepath.Join(config.ServersDir, "tshock", "logs")
+	logsDir := config.PluginServerLogsDir()
 	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
 		return "0 B"
 	}
@@ -298,9 +298,13 @@ func StartPluginServer(c *gin.Context) {
 		args = append(args, "-autocreate", "0")
 		log.Printf("[INFO] Using existing world, autocreate disabled")
 	}
-	logDir := filepath.Join(globalTshockDir, "logs")
-	os.MkdirAll(logDir, 0755)
-	logFile := filepath.Join(logDir, "plugin-server.log")
+	logDir := config.PluginServerLogsDir()
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("[ERROR] Failed to create plugin server log directory: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create log file"))
+		return
+	}
+	logFile := config.PluginServerLogFile()
 	logWriter, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create log file: %v", err)

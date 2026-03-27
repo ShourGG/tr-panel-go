@@ -19,13 +19,13 @@ import (
 )
 
 type TShockBootstrapStatus struct {
-	Installed    bool     `json:"installed"`
-	RuntimeReady bool     `json:"runtimeReady"`
-	ConfigExists bool     `json:"configExists"`
-	StorageType  string   `json:"storageType"`
-	DBPath       string   `json:"dbPath"`
-	DBExists     bool     `json:"dbExists"`
-	SchemaReady  bool     `json:"schemaReady"`
+	Installed     bool     `json:"installed"`
+	RuntimeReady  bool     `json:"runtimeReady"`
+	ConfigExists  bool     `json:"configExists"`
+	StorageType   string   `json:"storageType"`
+	DBPath        string   `json:"dbPath"`
+	DBExists      bool     `json:"dbExists"`
+	SchemaReady   bool     `json:"schemaReady"`
 	MissingTables []string `json:"missingTables"`
 	ServerRunning bool     `json:"serverRunning"`
 	SetupToken    string   `json:"setupToken"`
@@ -174,7 +174,7 @@ func getLatestSetupToken() string {
 		return token
 	}
 
-	logFile := filepath.Join(config.ServersDir, "tshock", "logs", "plugin-server.log")
+	logFile := config.PluginServerLogFile()
 	if !fileExists(logFile) {
 		return ""
 	}

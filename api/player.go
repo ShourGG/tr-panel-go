@@ -1,237 +1,369 @@
 package api
+
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"terraria-panel/config"
+	"terraria-panel/db"
 	"terraria-panel/models"
 	"terraria-panel/utils"
+
 	"github.com/gin-gonic/gin"
 )
-type BannedPlayer struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	IP     string `json:"ip"`
-	Reason string `json:"reason"`
+
+type PlayerListItem struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	IP           string `json:"ip"`
+	RoomID       int    `json:"roomId"`
+	RoomName     string `json:"roomName"`
+	RoomType     string `json:"roomType"`
+	RoomTypeText string `json:"roomTypeText"`
+	LoginCount   int    `json:"loginCount"`
+	Status       string `json:"status"`
+	Online       bool   `json:"online"`
+	Banned       bool   `json:"banned"`
+	BanReason    string `json:"banReason,omitempty"`
+	BanTime      string `json:"banTime,omitempty"`
+	Operator     string `json:"operator,omitempty"`
 }
+
+type playerActionTarget struct {
+	ID       int
+	Name     string
+	RoomID   int
+	RoomName string
+	RoomType string
+	Status   string
+	IsBanned bool
+}
+
 func GetPlayers(c *gin.Context) {
-	players := parseOnlinePlayersFromLogs()
+	statusFilter := strings.TrimSpace(strings.ToLower(c.DefaultQuery("status", "online")))
+	roomID, err := parseOptionalRoomID(c.Query("roomId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的房间ID"))
+		return
+	}
+
+	players, err := queryPlayers(statusFilter, roomID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(players))
 }
-func parseOnlinePlayersFromLogs() []models.Player {
-	players := []models.Player{}
-	playerID := 1
-	rooms, err := roomStorage.GetAll()
+
+func GetBannedPlayers(c *gin.Context) {
+	roomID, err := parseOptionalRoomID(c.Query("roomId"))
 	if err != nil {
-		return players
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的房间ID"))
+		return
 	}
-	for _, room := range rooms {
-		if room.Status != "running" {
-			continue
-		}
-		logFile := filepath.Join(config.DataDir, "logs", "room-"+strconv.Itoa(room.ID)+".log")
-		content, err := os.ReadFile(logFile)
-		if err != nil {
-			continue
-		}
-		lines := string(content)
-		playerMap := make(map[string]bool)
-		for _, line := range splitLines(lines) {
-			if contains(line, "has joined") {
-				playerName := extractPlayerName(line, "has joined")
-				if playerName != "" {
-					playerMap[playerName] = true
-				}
-			} else if contains(line, "has left") || contains(line, "disconnected") {
-				playerName := extractPlayerName(line, "has left")
-				if playerName != "" {
-					playerMap[playerName] = false
-				}
-			}
-		}
-		for name, isOnline := range playerMap {
-			if isOnline {
-				players = append(players, models.Player{
-					ID:       playerID,
-					Name:     name,
-					IP:       "未知",
-					RoomID:   room.ID,
-					RoomName: room.Name,
-					Status:   "在线",
-					IsBanned: false,
-				})
-				playerID++
-			}
-		}
+
+	players, err := queryPlayers("banned", roomID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
 	}
-	return players
+
+	c.JSON(http.StatusOK, models.SuccessResponse(players))
 }
-func splitLines(s string) []string {
-	return strings.Split(s, "\n")
-}
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
-}
-func extractPlayerName(line, keyword string) string {
-	idx := strings.Index(line, keyword)
-	if idx == -1 {
-		return ""
-	}
-	colonIdx := strings.Index(line, ":")
-	if colonIdx == -1 {
-		return ""
-	}
-	nameStart := colonIdx + 1
-	nameEnd := idx
-	if nameStart >= nameEnd {
-		return ""
-	}
-	name := strings.TrimSpace(line[nameStart:nameEnd])
-	if parenIdx := strings.Index(name, "("); parenIdx != -1 {
-		name = strings.TrimSpace(name[:parenIdx])
-	}
-	return name
-}
+
 func KickPlayer(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
+	player, err := getPlayerActionTarget(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的玩家ID"))
-		return
-	}
-	var players []models.Player
-	if err := utils.ReadJSON(config.PlayersFile, &players); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取玩家列表失败"))
-		return
-	}
-	var playerName string
-	for _, p := range players {
-		if p.ID == id {
-			playerName = p.Name
-			break
+		statusCode := http.StatusInternalServerError
+		if err == errPlayerNotFound {
+			statusCode = http.StatusNotFound
+		} else if err == errInvalidPlayerID {
+			statusCode = http.StatusBadRequest
 		}
-	}
-	if playerName == "" {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("玩家不存在"))
+		c.JSON(statusCode, models.ErrorResponse(err.Error()))
 		return
 	}
-	commandFile := filepath.Join(config.DataDir, "commands.txt")
-	command := "kick " + playerName + "\n"
-	f, err := os.OpenFile(commandFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		f.WriteString(command)
-		f.Close()
+
+	if player.Status != "online" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("玩家当前不在线"))
+		return
 	}
-	c.JSON(http.StatusOK, models.MessageResponse("已发送踢出命令: "+playerName))
+
+	if err := dispatchPlayerCommand(player, fmt.Sprintf("kick %s", player.Name)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送踢出命令失败: "+err.Error()))
+		return
+	}
+
+	LogPlayerKick(player.RoomID, player.RoomName, player.Name, "面板操作")
+	c.JSON(http.StatusOK, models.MessageResponse("已发送踢出命令: "+player.Name))
 }
+
 func BanPlayer(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
+	player, err := getPlayerActionTarget(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的玩家ID"))
+		statusCode := http.StatusInternalServerError
+		if err == errPlayerNotFound {
+			statusCode = http.StatusNotFound
+		} else if err == errInvalidPlayerID {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, models.ErrorResponse(err.Error()))
 		return
 	}
+
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	c.ShouldBindJSON(&req)
-	var players []models.Player
-	if err := utils.ReadJSON(config.PlayersFile, &players); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取玩家列表失败"))
+	_ = c.ShouldBindJSON(&req)
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "面板封禁"
+	}
+
+	if err := updatePlayerBanFlag(player.ID, true); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新封禁状态失败: "+err.Error()))
 		return
 	}
-	var targetPlayer *models.Player
-	for i := range players {
-		if players[i].ID == id {
-			targetPlayer = &players[i]
-			players[i].IsBanned = true
-			break
-		}
-	}
-	if targetPlayer == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("玩家不存在"))
-		return
-	}
-	if err := utils.WriteJSON(config.PlayersFile, players); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
-		return
-	}
-	banFile := filepath.Join(config.DataDir, "banned.json")
-	var bannedList []BannedPlayer
-	utils.ReadJSON(banFile, &bannedList)
-	exists := false
-	for _, banned := range bannedList {
-		if banned.ID == id {
-			exists = true
-			break
-		}
-	}
-	if !exists {
-		bannedList = append(bannedList, BannedPlayer{
-			ID:     targetPlayer.ID,
-			Name:   targetPlayer.Name,
-			IP:     targetPlayer.IP,
-			Reason: req.Reason,
-		})
-		utils.WriteJSON(banFile, bannedList)
-	}
-	commandFile := filepath.Join(config.DataDir, "commands.txt")
-	command := "ban " + targetPlayer.Name + " " + req.Reason + "\n"
-	f, err := os.OpenFile(commandFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		f.WriteString(command)
-		f.Close()
-	}
-	c.JSON(http.StatusOK, models.MessageResponse("玩家 "+targetPlayer.Name+" 已封禁"))
-}
-func GetBannedPlayers(c *gin.Context) {
-	banFile := filepath.Join(config.DataDir, "banned.json")
-	var bannedList []BannedPlayer
-	if err := utils.ReadJSON(banFile, &bannedList); err != nil {
-		bannedList = []BannedPlayer{}
-	}
-	c.JSON(http.StatusOK, models.SuccessResponse(bannedList))
-}
-func UnbanPlayer(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的玩家ID"))
-		return
-	}
-	var players []models.Player
-	if err := utils.ReadJSON(config.PlayersFile, &players); err == nil {
-		for i := range players {
-			if players[i].ID == id {
-				players[i].IsBanned = false
-				break
-			}
-		}
-		utils.WriteJSON(config.PlayersFile, players)
-	}
-	banFile := filepath.Join(config.DataDir, "banned.json")
-	var bannedList []BannedPlayer
-	utils.ReadJSON(banFile, &bannedList)
-	newList := []BannedPlayer{}
-	var playerName string
-	for _, banned := range bannedList {
-		if banned.ID != id {
-			newList = append(newList, banned)
+
+	message := "玩家 " + player.Name + " 已标记为封禁"
+	if player.Status == "online" {
+		if err := dispatchPlayerCommand(player, fmt.Sprintf("ban %s %s", player.Name, reason)); err != nil {
+			message += "，但未能同步服务器封禁命令: " + err.Error()
 		} else {
-			playerName = banned.Name
+			message += "，并已同步到运行中的服务器"
+		}
+	} else {
+		message += "，目标玩家当前不在线"
+	}
+
+	LogPlayerBan(player.Name, reason)
+	c.JSON(http.StatusOK, models.MessageResponse(message))
+}
+
+func UnbanPlayer(c *gin.Context) {
+	player, err := getPlayerActionTarget(c.Param("id"))
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if err == errPlayerNotFound {
+			statusCode = http.StatusNotFound
+		} else if err == errInvalidPlayerID {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	if err := updatePlayerBanFlag(player.ID, false); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新解封状态失败: "+err.Error()))
+		return
+	}
+
+	message := "玩家 " + player.Name + " 已解除封禁标记"
+	if player.Status == "online" {
+		if err := dispatchPlayerCommand(player, fmt.Sprintf("unban %s", player.Name)); err != nil {
+			message += "，但未能同步服务器解封命令: " + err.Error()
+		} else {
+			message += "，并已同步到运行中的服务器"
 		}
 	}
-	utils.WriteJSON(banFile, newList)
-	if playerName != "" {
-		commandFile := filepath.Join(config.DataDir, "commands.txt")
-		command := "unban " + playerName + "\n"
-		f, err := os.OpenFile(commandFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			f.WriteString(command)
-			f.Close()
-		}
+
+	LogPlayerUnban(player.Name)
+	c.JSON(http.StatusOK, models.MessageResponse(message))
+}
+
+var (
+	errInvalidPlayerID = fmt.Errorf("无效的玩家ID")
+	errPlayerNotFound  = fmt.Errorf("玩家不存在")
+)
+
+func parseOptionalRoomID(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
 	}
-	c.JSON(http.StatusOK, models.MessageResponse("玩家已解封"))
+	roomID, err := strconv.Atoi(raw)
+	if err != nil || roomID < 0 {
+		return 0, errInvalidPlayerID
+	}
+	return roomID, nil
+}
+
+func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
+	filters := make([]string, 0, 3)
+	args := make([]interface{}, 0, 3)
+
+	if roomID > 0 {
+		filters = append(filters, "p.room_id = ?")
+		args = append(args, roomID)
+	}
+
+	switch statusFilter {
+	case "", "online":
+		filters = append(filters, "COALESCE(p.status, 'offline') = 'online'", "COALESCE(p.is_banned, 0) = 0")
+	case "all":
+		filters = append(filters, "COALESCE(p.is_banned, 0) = 0")
+	case "banned":
+		filters = append(filters, "COALESCE(p.is_banned, 0) = 1")
+	case "offline":
+		filters = append(filters, "COALESCE(p.status, 'offline') != 'online'", "COALESCE(p.is_banned, 0) = 0")
+	default:
+		return nil, fmt.Errorf("无效的玩家状态过滤条件")
+	}
+
+	query := `
+		SELECT
+			p.id,
+			p.name,
+			COALESCE(p.ip, ''),
+			COALESCE(p.room_id, 0),
+			COALESCE(r.name, ''),
+			COALESCE(r.server_type, ''),
+			COALESCE(ps.login_count, 0),
+			COALESCE(p.status, 'offline'),
+			COALESCE(p.is_banned, 0)
+		FROM players p
+		LEFT JOIN rooms r ON p.room_id = r.id
+		LEFT JOIN player_stats ps ON p.id = ps.player_id
+	`
+	if len(filters) > 0 {
+		query += " WHERE " + strings.Join(filters, " AND ")
+	}
+	query += `
+		ORDER BY
+			CASE WHEN COALESCE(p.status, 'offline') = 'online' THEN 0 ELSE 1 END,
+			COALESCE(ps.last_login_time, p.last_seen, p.created_at) DESC,
+			p.name COLLATE NOCASE ASC
+	`
+
+	rows, err := db.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	players := make([]PlayerListItem, 0)
+	for rows.Next() {
+		var item PlayerListItem
+		var isBanned bool
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.IP,
+			&item.RoomID,
+			&item.RoomName,
+			&item.RoomType,
+			&item.LoginCount,
+			&item.Status,
+			&isBanned,
+		); err != nil {
+			return nil, err
+		}
+
+		item.Banned = isBanned
+		item.Online = item.Status == "online"
+		item.RoomTypeText = formatPlayerRoomType(item.RoomType)
+		if item.Banned {
+			item.BanReason, item.BanTime = getLatestBanInfo(item.Name)
+		}
+		players = append(players, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return players, nil
+}
+
+func getLatestBanInfo(playerName string) (string, string) {
+	var description sql.NullString
+	var createdAt sql.NullTime
+	err := db.DB.QueryRow(`
+		SELECT description, created_at
+		FROM activity_logs
+		WHERE type = ? AND player_name = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, models.ActivityTypePlayerBan, playerName).Scan(&description, &createdAt)
+	if err != nil {
+		return "", ""
+	}
+
+	reason := strings.TrimSpace(description.String)
+	reason = strings.TrimPrefix(reason, "原因: ")
+	banTime := ""
+	if createdAt.Valid {
+		banTime = createdAt.Time.Format("2006-01-02 15:04:05")
+	}
+	return reason, banTime
+}
+
+func formatPlayerRoomType(roomType string) string {
+	switch strings.ToLower(strings.TrimSpace(roomType)) {
+	case "vanilla":
+		return "原版"
+	case "tmodloader", "tmod":
+		return "tModLoader"
+	case "tshock":
+		return "TShock"
+	default:
+		return roomType
+	}
+}
+
+func getPlayerActionTarget(rawID string) (*playerActionTarget, error) {
+	id, err := strconv.Atoi(strings.TrimSpace(rawID))
+	if err != nil || id <= 0 {
+		return nil, errInvalidPlayerID
+	}
+
+	target := &playerActionTarget{}
+	err = db.DB.QueryRow(`
+		SELECT p.id, p.name, COALESCE(p.room_id, 0), COALESCE(r.name, ''), COALESCE(r.server_type, ''), COALESCE(p.status, 'offline'), COALESCE(p.is_banned, 0)
+		FROM players p
+		LEFT JOIN rooms r ON p.room_id = r.id
+		WHERE p.id = ?
+	`, id).Scan(&target.ID, &target.Name, &target.RoomID, &target.RoomName, &target.RoomType, &target.Status, &target.IsBanned)
+	if err == sql.ErrNoRows {
+		return nil, errPlayerNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+func updatePlayerBanFlag(playerID int, banned bool) error {
+	_, err := db.DB.Exec(`UPDATE players SET is_banned = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, banned, playerID)
+	return err
+}
+
+func dispatchPlayerCommand(player *playerActionTarget, command string) error {
+	if player.RoomID <= 0 {
+		return fmt.Errorf("玩家当前不在可操作的房间中")
+	}
+
+	room, err := roomStorage.GetByID(player.RoomID)
+	if err != nil {
+		return err
+	}
+	if room == nil {
+		return fmt.Errorf("房间不存在")
+	}
+	if room.Status != "running" {
+		return fmt.Errorf("目标房间当前未运行")
+	}
+
+	process, exists := utils.GetProcess(player.RoomID)
+	if !exists || process == nil || !process.IsRunning() {
+		return fmt.Errorf("目标房间进程不可用")
+	}
+
+	if !strings.HasSuffix(command, "\n") {
+		command += "\n"
+	}
+
+	return process.SendCommand(command)
 }

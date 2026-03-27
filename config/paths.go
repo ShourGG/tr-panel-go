@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -46,4 +47,20 @@ func init() {
 	os.MkdirAll(filepath.Join(ServersDir, "tModLoader"), 0755)
 	os.MkdirAll(filepath.Join(ServersDir, "tshock"), 0755)
 	os.MkdirAll(filepath.Join(DataDir, "tModLoader", "Mods"), 0755)
+}
+
+func PanelLogFile() string {
+	return filepath.Join(LogsDir, "panel.log")
+}
+
+func RoomLogFile(roomID int) string {
+	return filepath.Join(LogsDir, fmt.Sprintf("room-%d.log", roomID))
+}
+
+func PluginServerLogsDir() string {
+	return filepath.Join(ServersDir, "tshock", "logs")
+}
+
+func PluginServerLogFile() string {
+	return filepath.Join(PluginServerLogsDir(), "plugin-server.log")
 }

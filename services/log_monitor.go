@@ -4,9 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"terraria-panel/config"
@@ -106,7 +104,7 @@ func (m *LogMonitor) checkLogs() {
 	}
 }
 func (m *LogMonitor) processRoomLog(room *models.Room) {
-	logFile := filepath.Join(config.DataDir, "logs", "room-"+strconv.Itoa(room.ID)+".log")
+	logFile := config.RoomLogFile(room.ID)
 	fileInfo, err := os.Stat(logFile)
 	if os.IsNotExist(err) {
 		return

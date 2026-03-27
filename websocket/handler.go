@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -96,6 +95,13 @@ func HandleWebSocket(c *gin.Context) {
 	go client.writePump()
 	client.readPump()
 }
+func websocketLogFile(roomID int) string {
+	if roomID == 0 {
+		return config.PluginServerLogFile()
+	}
+	return config.RoomLogFile(roomID)
+}
+
 func (c *Client) readPump() {
 	defer func() {
 		clientsMu.Lock()
@@ -138,10 +144,7 @@ func (c *Client) writePump() {
 	}
 }
 func (c *Client) sendHistoryLogs() {
-	if c.roomID == 0 {
-		return
-	}
-	logFile := filepath.Join("../面板泰拉瑞亚情况/logs", fmt.Sprintf("room-%d.log", c.roomID))
+	logFile := websocketLogFile(c.roomID)
 	file, err := os.Open(logFile)
 	if err != nil {
 		return
@@ -305,7 +308,7 @@ func (c *LogClient) writePump() {
 	}
 }
 func (c *LogClient) tailLogs() {
-	logFile := filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", c.roomID), "server.log")
+	logFile := websocketLogFile(c.roomID)
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		infoMsg := map[string]interface{}{
 			"type":    "info",

@@ -96,7 +96,7 @@ func (h *RestartHandlerImpl) RestartRoom(roomID int) error {
 		return fmt.Errorf("unsupported server type: %s", room.ServerType)
 	}
 	logFile, err := os.OpenFile(
-		filepath.Join(roomDir, "server.log"),
+		config.RoomLogFile(room.ID),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0644,
 	)
@@ -178,40 +178,34 @@ func NewCleanupLogHandler(roomStorage storage.RoomStorage) CleanupLogHandler {
 }
 func (h *CleanupLogHandlerImpl) CleanupOldLogs(roomID int, daysToKeep int) error {
 	log.Printf("[CleanupLogHandler] Cleaning up logs older than %d days for room %d...", daysToKeep, roomID)
-	var logDir string
+	cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
+
+	logFile := config.PanelLogFile()
+	logTarget := "panel"
 	if roomID > 0 {
-		logDir = filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", roomID), "logs")
-	} else {
-		logDir = filepath.Join(config.DataDir, "logs")
+		logFile = config.RoomLogFile(roomID)
+		logTarget = fmt.Sprintf("room %d", roomID)
 	}
-	if _, err := os.Stat(logDir); os.IsNotExist(err) {
-		log.Printf("[CleanupLogHandler] Log directory does not exist: %s", logDir)
+
+	fileInfo, err := os.Stat(logFile)
+	if os.IsNotExist(err) {
+		log.Printf("[CleanupLogHandler] %s log file does not exist: %s", logTarget, logFile)
 		return nil
 	}
-	cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
-	files, err := ioutil.ReadDir(logDir)
 	if err != nil {
-		return fmt.Errorf("failed to read log directory: %w", err)
+		return fmt.Errorf("failed to stat log file: %w", err)
 	}
-	deletedCount := 0
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(file.Name(), ".log") && !strings.HasSuffix(file.Name(), ".txt") {
-			continue
-		}
-		if file.ModTime().Before(cutoffTime) {
-			filePath := filepath.Join(logDir, file.Name())
-			if err := os.Remove(filePath); err != nil {
-				log.Printf("[CleanupLogHandler] Failed to delete log file %s: %v", filePath, err)
-				continue
-			}
-			log.Printf("[CleanupLogHandler] Deleted old log: %s", file.Name())
-			deletedCount++
-		}
+
+	if !fileInfo.ModTime().Before(cutoffTime) {
+		log.Printf("[CleanupLogHandler] %s log file is newer than cutoff: %s", logTarget, logFile)
+		return nil
 	}
-	log.Printf("[CleanupLogHandler] Cleanup completed. Deleted %d old log files.", deletedCount)
+
+	if err := os.Remove(logFile); err != nil {
+		return fmt.Errorf("failed to delete log file %s: %w", logFile, err)
+	}
+
+	log.Printf("[CleanupLogHandler] Deleted old %s log file: %s", logTarget, logFile)
 	return nil
 }
 
