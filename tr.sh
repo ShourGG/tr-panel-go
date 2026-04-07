@@ -37,12 +37,12 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.7"
+SCRIPT_VERSION="1.0.8"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
-FALLBACK_VERSION="v1.1.0"
+FALLBACK_VERSION="v1.1.1"
 PORT=8800
 
 # 从 GitHub API 获取最新版本号
