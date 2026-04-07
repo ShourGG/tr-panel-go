@@ -1,13 +1,14 @@
 package api
 
 import (
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"sync"
 	"terraria-panel/middleware"
 	wshandler "terraria-panel/websocket"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
@@ -133,4 +134,12 @@ func HandleRoomLogsWS(c *gin.Context) {
 	}
 
 	wshandler.HandleRoomLogs(c)
+}
+
+func HandleServerLogsWS(c *gin.Context) {
+	if !authorizeWebSocketRequest(c) {
+		return
+	}
+
+	wshandler.HandleServerLogs(c)
 }

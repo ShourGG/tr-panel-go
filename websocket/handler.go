@@ -1,4 +1,5 @@
 package websocket
+
 import (
 	"bufio"
 	"encoding/json"
@@ -9,31 +10,37 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"time"
 	"terraria-panel/config"
 	"terraria-panel/utils"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/hpcloud/tail"
 )
+
 func init() {
 	utils.BroadcastPluginServerLog = BroadcastPluginServerLog
 }
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
+
 type Client struct {
 	conn   *websocket.Conn
 	roomID int
 	send   chan []byte
 }
+
 var (
 	clients   = make(map[*Client]bool)
 	clientsMu sync.RWMutex
 	broadcast = make(chan []byte, 256)
 )
+
 func BroadcastMessage(data []byte) {
 	clientsMu.RLock()
 	clientCount := len(clients)
@@ -188,6 +195,7 @@ func BroadcastLog(roomID int, message string) {
 		}
 	}
 }
+
 type LogClient struct {
 	conn   *websocket.Conn
 	roomID int
@@ -195,10 +203,12 @@ type LogClient struct {
 	tail   *tail.Tail
 	mu     sync.Mutex
 }
+
 var (
 	logClients   = make(map[*LogClient]bool)
 	logClientsMu sync.RWMutex
 )
+
 func HandleRoomLogs(c *gin.Context) {
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.Atoi(roomIDStr)
@@ -418,6 +428,186 @@ func (c *LogClient) sendHistoryLogs(logFile string) {
 		time.Sleep(1 * time.Millisecond)
 	}
 }
+func HandleServerLogs(c *gin.Context) {
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("[WebSocket] Failed to upgrade server logs connection: %v", err)
+		return
+	}
+	send := make(chan []byte, 512)
+	done := make(chan struct{})
+
+	welcomeMsg := map[string]interface{}{
+		"type":    "connected",
+		"message": "🎮 已连接到全局服务器日志流",
+		"time":    time.Now().Format("2006-01-02 15:04:05"),
+	}
+	data, _ := json.Marshal(welcomeMsg)
+	conn.WriteMessage(websocket.TextMessage, data)
+
+	// Find all room log files
+	logDir := config.LogsDir
+	entries, _ := os.ReadDir(logDir)
+	var roomFiles []struct {
+		id   int
+		path string
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		var rid int
+		if _, err := fmt.Sscanf(name, "room-%d.log", &rid); err == nil && rid > 0 {
+			roomFiles = append(roomFiles, struct {
+				id   int
+				path string
+			}{rid, config.RoomLogFile(rid)})
+		}
+	}
+
+	if len(roomFiles) == 0 {
+		infoMsg := map[string]interface{}{
+			"type":    "info",
+			"message": "⏳ 暂无房间日志文件，请先启动至少一个房间",
+			"time":    time.Now().Format("15:04:05"),
+		}
+		data, _ := json.Marshal(infoMsg)
+		conn.WriteMessage(websocket.TextMessage, data)
+	}
+
+	var tails []*tail.Tail
+
+	// Tail each room log file
+	for _, rf := range roomFiles {
+		roomID := rf.id
+		logFile := rf.path
+		if _, err := os.Stat(logFile); os.IsNotExist(err) {
+			continue
+		}
+
+		// Send last 50 lines of history per room
+		func() {
+			file, err := os.Open(logFile)
+			if err != nil {
+				return
+			}
+			defer file.Close()
+			lines := []string{}
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				lines = append(lines, scanner.Text())
+				if len(lines) > 50 {
+					lines = lines[1:]
+				}
+			}
+			for _, line := range lines {
+				logMsg := map[string]interface{}{
+					"type":     "log",
+					"message":  line,
+					"roomName": fmt.Sprintf("Room %d", roomID),
+					"time":     time.Now().Format("15:04:05"),
+				}
+				d, _ := json.Marshal(logMsg)
+				conn.WriteMessage(websocket.TextMessage, d)
+			}
+		}()
+
+		t, err := tail.TailFile(logFile, tail.Config{
+			Follow:   true,
+			ReOpen:   true,
+			Poll:     true,
+			Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
+		})
+		if err != nil {
+			log.Printf("[WebSocket] Failed to tail %s: %v", logFile, err)
+			continue
+		}
+		tails = append(tails, t)
+
+		go func(t *tail.Tail, rid int) {
+			for {
+				select {
+				case <-done:
+					return
+				case line, ok := <-t.Lines:
+					if !ok {
+						return
+					}
+					if line.Err != nil {
+						continue
+					}
+					logMsg := map[string]interface{}{
+						"type":     "log",
+						"message":  line.Text,
+						"roomName": fmt.Sprintf("Room %d", rid),
+						"time":     time.Now().Format("15:04:05"),
+					}
+					d, _ := json.Marshal(logMsg)
+					select {
+					case send <- d:
+					default:
+					}
+				}
+			}
+		}(t, roomID)
+	}
+
+	startMsg := map[string]interface{}{
+		"type":    "info",
+		"message": fmt.Sprintf("✅ 正在监听 %d 个房间的日志...", len(roomFiles)),
+		"time":    time.Now().Format("15:04:05"),
+	}
+	data, _ = json.Marshal(startMsg)
+	conn.WriteMessage(websocket.TextMessage, data)
+
+	// Write pump
+	go func() {
+		ticker := time.NewTicker(54 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case msg, ok := <-send:
+				if !ok {
+					return
+				}
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					return
+				}
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Read pump (keep alive)
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+
+	// Cleanup
+	close(done)
+	for _, t := range tails {
+		t.Stop()
+	}
+	conn.Close()
+	log.Println("[WebSocket] Server logs client disconnected")
+}
+
 func BroadcastPluginServerLog(message string) {
 	logClientsMu.RLock()
 	defer logClientsMu.RUnlock()

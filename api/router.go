@@ -161,12 +161,14 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		apiGroup.GET("/ws", HandleWebSocket)
 		apiGroup.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
 		apiGroup.GET("/ws/logs/:id", HandleRoomLogsWS)
+		apiGroup.GET("/ws/server/logs", HandleServerLogsWS)
 	}
 	// Backward-compatible WebSocket routes for older frontend bundles
 	// that still connect to /ws instead of /api/ws.
 	r.GET("/ws", HandleWebSocket)
 	r.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
 	r.GET("/ws/logs/:id", HandleRoomLogsWS)
+	r.GET("/ws/server/logs", HandleServerLogsWS)
 	distFS, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
 		panic("Failed to load frontend files: " + err.Error())
