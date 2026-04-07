@@ -611,7 +611,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.1.8"
+	return "1.1.9"
 }
 
 // SelfUpgrade handles POST /system/upgrade
@@ -668,14 +668,37 @@ func SelfUpgrade(c *gin.Context) {
 	backupPath := execPath + ".bak"
 	tmpPath := execPath + ".new"
 
-	// 4. Download new binary
-	log.Printf("[升级] 正在从 %s 下载 %s ...", downloadURL, release.TagName)
-	dlResp, err := client.Get(downloadURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败: "+err.Error()))
+	// 4. Download new binary (try direct first, then mirrors)
+	dlClient := &http.Client{Timeout: 120 * time.Second}
+	tryURLs := []string{downloadURL}
+	for _, mirror := range githubMirrors {
+		tryURLs = append(tryURLs, mirror+downloadURL)
+	}
+	var dlResp *http.Response
+	var dlErr error
+	var usedURL string
+	for _, tryURL := range tryURLs {
+		log.Printf("[升级] 尝试下载: %s", tryURL)
+		dlResp, dlErr = dlClient.Get(tryURL)
+		if dlErr == nil && dlResp.StatusCode == http.StatusOK {
+			usedURL = tryURL
+			break
+		}
+		if dlResp != nil {
+			dlResp.Body.Close()
+		}
+		log.Printf("[升级] %s 失败，尝试下一个...", tryURL)
+	}
+	if dlErr != nil || dlResp == nil {
+		errMsg := "所有下载源均失败"
+		if dlErr != nil {
+			errMsg += ": " + dlErr.Error()
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(errMsg))
 		return
 	}
 	defer dlResp.Body.Close()
+	log.Printf("[升级] 正在从 %s 下载 %s ...", usedURL, release.TagName)
 
 	tmpFile, err := os.Create(tmpPath)
 	if err != nil {

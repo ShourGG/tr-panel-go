@@ -37,17 +37,59 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.9"
+SCRIPT_VERSION="1.1.0"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
 PORT=8800
 
+# ────────── GitHub 镜像支持 ──────────
+# 镜像列表：名称|API前缀|下载前缀|Raw前缀
+MIRRORS=(
+    "GitHub 官方 (直连)|https://api.github.com|https://github.com|https://raw.githubusercontent.com"
+    "ghfast.top|https://api.github.com|https://ghfast.top/https://github.com|https://ghfast.top/https://raw.githubusercontent.com"
+    "gh-proxy.com|https://api.github.com|https://gh-proxy.com/https://github.com|https://gh-proxy.com/https://raw.githubusercontent.com"
+    "ghproxy.cn|https://api.github.com|https://ghproxy.cn/https://github.com|https://ghproxy.cn/https://raw.githubusercontent.com"
+)
+
+# 当前选中的镜像索引（默认 0 = 直连）
+MIRROR_IDX=0
+
+get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
+get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
+get_mirror_raw()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f4; }
+
+select_mirror() {
+    echo ""
+    echo -e "${BLUE}========== 选择 GitHub 镜像 ==========${NC}"
+    echo -e "${YELLOW}如果下载速度慢或无法连接 GitHub，请选择镜像加速${NC}"
+    echo ""
+    local i=0
+    for m in "${MIRRORS[@]}"; do
+        local name=$(echo "$m" | cut -d'|' -f1)
+        if [ $i -eq $MIRROR_IDX ]; then
+            echo -e "  ${GREEN}[$i] $name  ← 当前${NC}"
+        else
+            echo "  [$i] $name"
+        fi
+        ((i++))
+    done
+    echo ""
+    read -p "请选择镜像 [0-$((${#MIRRORS[@]}-1))]（回车保持当前）: " idx
+    if [ -n "$idx" ] && [ "$idx" -ge 0 ] 2>/dev/null && [ "$idx" -lt "${#MIRRORS[@]}" ] 2>/dev/null; then
+        MIRROR_IDX=$idx
+        local name=$(echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f1)
+        echo -e "${GREEN}已切换到: $name${NC}"
+    fi
+    echo ""
+}
+
 # 从 GitHub API 获取最新版本号（失败则报错退出，不使用写死的兜底版本）
 get_latest_version() {
-    LATEST=$(timeout 10 curl -s --connect-timeout 5 --max-time 10 \
-        https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest \
+    local api_base=$(get_mirror_api)
+    LATEST=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
+        "${api_base}/repos/ShourGG/tr-panel-go/releases/latest" \
         2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
     if [ -z "$LATEST" ]; then
         echo ""
@@ -56,6 +98,21 @@ get_latest_version() {
         echo "$LATEST"
         return 0
     fi
+}
+
+# 构建下载 URL
+get_release_download_url() {
+    local version="$1"
+    local filename="$2"
+    local dl_base=$(get_mirror_download)
+    echo "${dl_base}/ShourGG/tr-panel-go/releases/download/${version}/${filename}"
+}
+
+# 构建 raw 文件 URL
+get_raw_url() {
+    local path="$1"
+    local raw_base=$(get_mirror_raw)
+    echo "${raw_base}/ShourGG/tr-panel-go/main/${path}"
 }
 
 # 颜色定义
@@ -137,6 +194,9 @@ show_menu() {
     echo "[8]: 查看日志 (View logs)"
     echo "[9]: 修改端口 (Change port)"
     echo "[10]: 卸载面板 (Uninstall)"
+    echo "————————————————————————————————————————"
+    local mirror_name=$(echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f1)
+    echo -e "[12]: 切换 GitHub 镜像 (当前: ${GREEN}${mirror_name}${NC})"
     echo "[11]: 退出脚本 (Exit)"
     echo "————————————————————————————————————————"
     echo ""
@@ -151,15 +211,16 @@ install_service() {
 
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
-        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接${NC}"
+        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接或切换镜像 [选项 12]${NC}"
         exit 1
     fi
-    DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
+    DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
     echo -e "${GREEN}[2/5] 下载 TR Panel ${VERSION}...${NC}"
+    echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${NC}"
     if command -v wget &> /dev/null; then
-        wget -O tr-panel $DOWNLOAD_URL
+        wget -O tr-panel "$DOWNLOAD_URL"
     elif command -v curl &> /dev/null; then
-        curl -L -o tr-panel $DOWNLOAD_URL
+        curl -L -o tr-panel "$DOWNLOAD_URL"
     else
         echo -e "${RED}错误: 需要安装 wget 或 curl${NC}"
         exit 1
@@ -240,11 +301,12 @@ update_panel() {
     check_root
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
-        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接${NC}"
+        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接或切换镜像 [选项 12]${NC}"
         exit 1
     fi
-    DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
+    DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
     echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
+    echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${NC}"
     
     systemctl stop $SERVICE_NAME
     cd $INSTALL_DIR
@@ -294,7 +356,8 @@ force_update() {
 # 更新脚本
 update_script() {
     echo -e "${GREEN}更新脚本...${NC}"
-    SCRIPT_URL="https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh?nocache=$(date +%s)"
+    SCRIPT_URL="$(get_raw_url 'tr.sh')?nocache=$(date +%s)"
+    echo -e "${BLUE}下载地址: ${SCRIPT_URL}${NC}"
     SCRIPT_PATH=$(realpath "$0")
     if command -v wget &> /dev/null; then
         wget -q -O "$SCRIPT_PATH" "$SCRIPT_URL"
@@ -362,7 +425,7 @@ uninstall() {
 # 主循环
 while true; do
     show_menu
-    read -p "请输入选择 (Please enter your selection) [0-11]: " choice
+    read -p "请输入选择 (Please enter your selection) [0-12]: " choice
     
     case $choice in
         0)
@@ -410,6 +473,10 @@ while true; do
         11)
             echo -e "${GREEN}退出脚本${NC}"
             exit 0
+            ;;
+        12)
+            select_mirror
+            read -p "按回车键继续..."
             ;;
         *)
             echo -e "${RED}无效选择${NC}"

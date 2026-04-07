@@ -1,4 +1,5 @@
 package api
+
 import (
 	"archive/zip"
 	"encoding/json"
@@ -13,20 +14,24 @@ import (
 	"terraria-panel/config"
 	"terraria-panel/models"
 	"time"
+
 	"github.com/gin-gonic/gin"
 )
+
 const (
 	PluginsJSONURLOriginal = "https://raw.githubusercontent.com/UnrealMultiple/TShockPlugin/master/Plugins.json"
 	PluginsZipURLOriginal  = "https://github.com/UnrealMultiple/TShockPlugin/releases/download/V1.0.0.0/Plugins.zip"
-	PluginsCacheDir      = "plugin-store"
-	PluginsCacheFile     = "plugins-cache.json"
-	PluginsCacheDuration = 72 * time.Hour
+	PluginsCacheDir        = "plugin-store"
+	PluginsCacheFile       = "plugins-cache.json"
+	PluginsCacheDuration   = 72 * time.Hour
 )
+
 var githubMirrors = []string{
-	"https://ghproxy.com/",
+	"https://ghfast.top/",
 	"https://gh-proxy.com/",
+	"https://ghproxy.cn/",
+	"https://ghproxy.com/",
 	"https://mirror.ghproxy.com/",
-	"https://ghps.cc/",
 }
 var (
 	downloadProgress = make(map[string]*models.DownloadProgress)
@@ -37,6 +42,7 @@ var (
 	pluginStoreCacheTime  time.Time
 	pluginStoreCacheMutex sync.RWMutex
 )
+
 func GetPlugins(c *gin.Context) {
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.Atoi(roomIDStr)
@@ -321,8 +327,8 @@ func GetPluginStore(c *gin.Context) {
 		errorMsg := fmt.Sprintf("Failed to fetch plugin store: %v", err)
 		fmt.Printf("[Plugin Store] 💥 Returning error to client: %s\n", errorMsg)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch plugin store",
-			"details": errorMsg,
+			"error":      "Failed to fetch plugin store",
+			"details":    errorMsg,
 			"suggestion": "Please check your network connection or try again later. The plugin store data is fetched from GitHub.",
 		})
 		return
@@ -359,12 +365,12 @@ func InstallPluginFromStore(c *gin.Context) {
 	}
 	progressID := fmt.Sprintf("%d-%s-%d", roomID, pluginID, time.Now().Unix())
 	progress := &models.DownloadProgress{
-		ID:          progressID,
-		PluginName:  pluginID,
-		Status:      "downloading",
-		Progress:    0,
-		Message:     "Starting download...",
-		StartTime:   time.Now(),
+		ID:         progressID,
+		PluginName: pluginID,
+		Status:     "downloading",
+		Progress:   0,
+		Message:    "Starting download...",
+		StartTime:  time.Now(),
 	}
 	progressMutex.Lock()
 	downloadProgress[progressID] = progress
@@ -485,6 +491,7 @@ func downloadPluginFileWithProgress(url, destPath string, progress *models.Downl
 	}
 	return nil
 }
+
 type progressReader struct {
 	reader       io.Reader
 	total        int64
@@ -493,6 +500,7 @@ type progressReader struct {
 	baseProgress int
 	maxProgress  int
 }
+
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
 	pr.current += int64(n)
