@@ -23,25 +23,25 @@
 
 <br/>
 
-[快速安装](#-快速安装) · [界面预览](#-界面预览) · [功能特性](#-功能特性) · [技术栈](#-技术栈) · [问题反馈](https://github.com/ShourGG/tr-panel-go/issues)
+[快速安装](#快速安装) · [界面预览](#界面预览) · [功能特性](#功能特性) · [技术栈](#技术栈) · [问题反馈](https://github.com/ShourGG/tr-panel-go/issues)
 
 </div>
 
 ---
 
-## ✨ 项目简介
+## 项目简介
 
 **TR Panel Go** 是一款专为泰拉瑞亚游戏服务器设计的 Web 管理面板，提供直观的可视化界面与强大的后端支撑。
 
-- 🚀 **高性能**：Go 原生并发，API 响应 ~100ms，页面加载 ~78ms
-- 📦 **零依赖部署**：前端静态资源内嵌进单一可执行文件，`wget` 即装即用
-- 🎮 **双模式支持**：原版泰拉瑞亚房间管理 + TShock 插件服模式无缝切换
-- 🌐 **国际化**：完整中英文双语界面
-- 🔔 **版本自检**：面板与脚本均支持自动检测新版本并提示更新
+- **高性能**：Go 原生并发，API 响应 ~100ms，页面加载 ~78ms
+- **零依赖部署**：前端静态资源内嵌进单一可执行文件，`wget` 即装即用
+- **双模式支持**：原版泰拉瑞亚房间管理 + TShock 插件服模式无缝切换
+- **国际化**：完整中英文双语界面
+- **版本自检**：面板与脚本均支持自动检测新版本并提示更新
 
 ---
 
-## ⚡ 快速安装
+## 快速安装
 
 > **系统要求：** Ubuntu 24.04+（低版本可能出现 GLIBC 兼容性报错）
 
@@ -61,7 +61,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
-## 🖼 界面预览
+## 界面预览
 
 <table>
   <tr>
@@ -84,7 +84,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
-## 🔧 功能特性
+## 功能特性
 
 ### 服务器管理
 - 多房间实例创建、启停控制与状态监控
@@ -109,7 +109,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
-## 🛠 技术栈
+## 技术栈
 
 | 层级 | 技术 |
 |------|------|
@@ -126,7 +126,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
-## 📊 性能基准
+## 性能基准
 
 | 指标 | 数值 |
 |------|------|
@@ -138,7 +138,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
-## 📋 脚本管理菜单
+## 脚本管理菜单
 
 ```
 [0]  下载并启动服务     [1]  启动服务
@@ -149,29 +149,29 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 [10] 卸载面板          [11] 退出
 ```
 
-> 脚本会在每次启动时**自动检测自身是否有新版本**，有更新时醒目提示。
+> 脚本会在每次启动时自动检测自身是否有新版本，有更新时醒目提示。
 
 ---
 
-## 📄 开源协议
+## 开源协议
 
 本项目采用 [CC BY-NC 4.0](LICENSE) 协议。
 
-- ✅ 允许个人学习、非商业使用与二次分发
-- ❌ **禁止商业使用** — 不得用于盈利项目或商业产品
+- 允许个人学习、非商业使用与二次分发
+- **禁止商业使用** — 不得用于盈利项目或商业产品
 
 ---
 
-## 👤 作者
+## 作者
 
 由 **[ShourGG](https://github.com/ShourGG)** 独立开发与维护。
 
-如果这个项目对你有帮助，欢迎点个 ⭐ Star 支持一下！
+如果这个项目对你有帮助，欢迎点个 Star 支持一下！
 
 ---
 
 <div align="center">
 
-**[⬆ 回到顶部](#tr-panel-go)**
+[回到顶部](#tr-panel-go)
 
 </div>
