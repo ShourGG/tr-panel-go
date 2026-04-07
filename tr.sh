@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.5"
+SCRIPT_VERSION="1.0.6"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -192,7 +192,12 @@ EOF
     echo -e "${GREEN}  安装完成！${NC}"
     echo -e "${GREEN}=========================================${NC}"
     echo ""
-    echo -e "面板地址: ${GREEN}http://$(hostname -I | awk '{print $1}'):${PORT}${NC}"
+    PUBLIC_IP=$(timeout 3 curl -s --max-time 3 ifconfig.me 2>/dev/null || timeout 3 curl -s --max-time 3 ip.sb 2>/dev/null)
+    LOCAL_IP=$(hostname -I | awk '{print $1}')
+    echo -e "内网访问: ${GREEN}http://${LOCAL_IP}:${PORT}${NC}"
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "公网访问: ${GREEN}http://${PUBLIC_IP}:${PORT}${NC}"
+    fi
     echo ""
 }
 
