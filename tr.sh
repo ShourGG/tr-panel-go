@@ -42,8 +42,8 @@ SCRIPT_VERSION="1.0.2"
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
-VERSION="v1.0.0"
-DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/tr-panel-linux-amd64"
+VERSION="v1.1.0"
+DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
 PORT=8800
 
 # 颜色定义

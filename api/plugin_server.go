@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -96,28 +97,23 @@ func formatFileSize(size int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 func getTShockVersion() string {
-	versionFile := filepath.Join(config.ServersDir, "tshock", ".tshock_version")
-	if data, err := os.ReadFile(versionFile); err == nil {
-		version := strings.TrimSpace(string(data))
-		if version != "" {
-			if version == "5" {
-				return "5.2.4"
-			}
-			if version == "6" {
-				return "6.x"
-			}
-			return version
+	tshockPath := filepath.Join(config.ServersDir, "tshock")
+	detection := detectInstalledTShockVersion(tshockPath)
+	if detection.RawVersion != "" {
+		raw := strings.TrimSpace(detection.RawVersion)
+		raw = strings.TrimPrefix(raw, "v")
+		raw = strings.TrimPrefix(raw, "V")
+		if raw != "" {
+			return raw
 		}
 	}
-	tshockDir := filepath.Join(config.ServersDir, "tshock")
-	serverExe := filepath.Join(tshockDir, "TShock.Server")
-	dllFile := filepath.Join(tshockDir, "TShock.Server.dll")
-	if _, err := os.Stat(serverExe); os.IsNotExist(err) {
-		if _, err := os.Stat(dllFile); os.IsNotExist(err) {
-			return "未安装"
-		}
+	if detection.Version != "unknown" {
+		return detection.Version
 	}
-	return "未知版本"
+	if hasInstalledTShockBinary(tshockPath) {
+		return "未知版本"
+	}
+	return "未安装"
 }
 func isBootstrapConfigurationComplete(ps *models.PluginServer) bool {
 	if ps.Port < 1024 || ps.Port > 65535 {
@@ -451,62 +447,170 @@ func UpdatePluginServerConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Plugin server configuration updated successfully"))
 }
 func GetPluginServerPlugins(c *gin.Context) {
-	c.Params = append(c.Params, gin.Param{
-		Key:   "id",
-		Value: "0",
+	pluginsDir := services.GetPluginServerPluginsDir()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    collectPluginsFromDir(pluginsDir),
 	})
-	GetRoomPlugins(c)
 }
-func UploadPluginToServer(c *gin.Context) {
-	c.Params = append(c.Params, gin.Param{
-		Key:   "id",
-		Value: "0",
-	})
-	AddRoomPlugin(c)
+
+func UploadPluginServerPlugin(c *gin.Context) {
+	pluginsDir := services.GetPluginServerPluginsDir()
+	file, ok := getUploadedPluginFile(c)
+	if !ok {
+		return
+	}
+
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败: "+err.Error()))
+		return
+	}
+
+	dst := filepath.Join(pluginsDir, file.Filename)
+	if err := c.SaveUploadedFile(file, dst); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存插件失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("插件 %s 已上传到插件服", file.Filename)))
 }
-func DeletePluginFromServer(c *gin.Context) {
-	c.Params = append(c.Params, gin.Param{
-		Key:   "id",
-		Value: "0",
-	})
-	DeleteRoomPlugin(c)
-}
-func TogglePluginServer(c *gin.Context) {
+
+func DeletePluginServerPlugin(c *gin.Context) {
 	pluginName := c.Param("name")
 	if pluginName == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Plugin name is required"))
 		return
 	}
-	c.Params = append(c.Params, gin.Param{
-		Key:   "id",
-		Value: "0",
-	})
-	TogglePlugin(c)
+
+	pluginsDir := services.GetPluginServerPluginsDir()
+	enabledPath := filepath.Join(pluginsDir, pluginName)
+	disabledPath := filepath.Join(pluginsDir, "Disabled", pluginName)
+
+	if _, err := os.Stat(enabledPath); err == nil {
+		if err := os.Remove(enabledPath); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除插件失败: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("插件 %s 已从插件服删除", pluginName)))
+		return
+	}
+
+	if _, err := os.Stat(disabledPath); err == nil {
+		if err := os.Remove(disabledPath); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除插件失败: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("插件 %s 已从插件服删除", pluginName)))
+		return
+	}
+
+	c.JSON(http.StatusNotFound, models.ErrorResponse("插件不存在: "+pluginName))
 }
-func CopyPluginToRoom(c *gin.Context) {
+
+func TogglePluginServerPlugin(c *gin.Context) {
 	pluginName := c.Param("name")
 	if pluginName == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Plugin name is required"))
 		return
 	}
+
+	var req models.PluginToggleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request body"))
+		return
+	}
+
+	pluginsDir := services.GetPluginServerPluginsDir()
+	disabledDir := filepath.Join(pluginsDir, "Disabled")
+	if err := os.MkdirAll(disabledDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败: "+err.Error()))
+		return
+	}
+
+	if req.Enabled {
+		srcPath := filepath.Join(disabledDir, pluginName)
+		destPath := filepath.Join(pluginsDir, pluginName)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("Plugin not found in disabled directory"))
+			return
+		}
+		if err := moveFile(srcPath, destPath); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to enable plugin"))
+			return
+		}
+		c.JSON(http.StatusOK, models.MessageResponse("Plugin enabled successfully"))
+		return
+	}
+
+	srcPath := filepath.Join(pluginsDir, pluginName)
+	destPath := filepath.Join(disabledDir, pluginName)
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Plugin not found in enabled directory"))
+		return
+	}
+	if err := moveFile(srcPath, destPath); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to disable plugin"))
+		return
+	}
+	c.JSON(http.StatusOK, models.MessageResponse("Plugin disabled successfully"))
+}
+
+func CopyPluginServerPluginToRoom(c *gin.Context) {
+	pluginName := c.Param("name")
+	if pluginName == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Plugin name is required"))
+		return
+	}
+
 	var req struct {
-		RoomID int `json:"roomId" binding:"required"`
+		RoomID int `json:"roomId"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request: "+err.Error()))
 		return
 	}
-	if req.RoomID == services.PluginServerID {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Cannot copy plugin to plugin server itself"))
+	if req.RoomID <= 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的房间ID"))
 		return
 	}
-	c.Params = append(c.Params, gin.Param{
-		Key:   "id",
-		Value: strconv.Itoa(req.RoomID),
-	})
-	c.Request.Body = http.NoBody
-	c.Set("pluginName", pluginName)
-	CopyPluginFromShared(c)
+
+	roomPluginsDir, ok := resolveRoomPluginsDir(c, req.RoomID)
+	if !ok {
+		return
+	}
+
+	srcPath := filepath.Join(services.GetPluginServerPluginsDir(), pluginName)
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("共享插件不存在: "+pluginName))
+		return
+	}
+
+	if err := os.MkdirAll(roomPluginsDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败: "+err.Error()))
+		return
+	}
+
+	dstPath := filepath.Join(roomPluginsDir, pluginName)
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取共享插件失败"))
+		return
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dstPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件文件失败"))
+		return
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("复制插件失败"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("插件 %s 已从插件服复制到房间 %d", pluginName, req.RoomID)))
 }
 func InitializePluginServerOnStartup(db *sql.DB) error {
 	service := services.NewPluginServerService(db)

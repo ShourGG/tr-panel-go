@@ -1,13 +1,19 @@
 package api
+
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/gin-gonic/gin"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"terraria-panel/config"
 	"terraria-panel/services"
-	"github.com/gin-gonic/gin"
 )
+
 var configService *services.ConfigService
+
 func InitConfigService(tshockPath string) {
 	configService = services.NewConfigService(tshockPath)
 }
@@ -28,16 +34,17 @@ func InitializePluginServerConfig(c *gin.Context) {
 		})
 		return
 	}
-	if err := configService.InitializeConfig(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "初始化配置文件失败: " + err.Error(),
-		})
-		return
+
+	detection := detectInstalledTShockVersion(filepath.Join(config.ServersDir, "tshock"))
+	versionLabel := "TShock"
+	if detection.Version != "unknown" {
+		versionLabel = fmt.Sprintf("TShock %s", detection.Version)
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "配置文件初始化成功",
+
+	c.JSON(http.StatusConflict, gin.H{
+		"success": false,
+		"code":    "OFFICIAL_FIRST_RUN_REQUIRED",
+		"error":   fmt.Sprintf("已停止使用本地模板初始化。请先启动已安装的 %s，让官方首次启动流程生成 config.json 和 sscconfig.json。", versionLabel),
 	})
 }
 func GetPluginServerConfig(c *gin.Context) {
@@ -201,26 +208,6 @@ func SavePluginServerConfig(c *gin.Context) {
 	}
 	if srvPassword, ok := settings["ServerPassword"].(string); ok {
 		password = srvPassword
-	}
-	if port == 7777 {
-		if serverPort, ok := settings["服务器端口"].(float64); ok {
-			port = int(serverPort)
-		}
-	}
-	if maxPlayers == 8 {
-		if maxSlots, ok := settings["最大人数"].(float64); ok {
-			maxPlayers = int(maxSlots)
-		}
-	}
-	if serverName == "" {
-		if srvName, ok := settings["服务器名称"].(string); ok {
-			serverName = srvName
-		}
-	}
-	if password == "" {
-		if pwd, ok := settings["服务器密码"].(string); ok {
-			password = pwd
-		}
 	}
 	log.Printf("[DEBUG] SavePluginServerConfig - Extracted from config.json:")
 	log.Printf("[DEBUG]   Port: %d, MaxPlayers: %d, ServerName: %s", port, maxPlayers, serverName)

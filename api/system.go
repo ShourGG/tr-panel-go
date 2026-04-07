@@ -608,11 +608,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok || info == nil || info.Main.Version == "" || info.Main.Version == "(devel)" {
-		return "开发版"
-	}
-	return info.Main.Version
+	return "1.1.0"
 }
 
 func getServerVersionInfo(serverType string) (string, string) {

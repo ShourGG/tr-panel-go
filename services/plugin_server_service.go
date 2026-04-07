@@ -361,50 +361,7 @@ func (s *PluginServerService) InitializeConfigFile() error {
 		log.Printf("[INFO] TShock config.json already exists: %s", configPath)
 		return nil
 	}
-	log.Printf("[INFO] TShock config.json not found, initializing from template...")
-	execPath, err := os.Executable()
-	if err != nil {
-		log.Printf("[ERROR] Failed to get executable path: %v", err)
-		return fmt.Errorf("failed to get executable path: %v", err)
-	}
-	execDir := filepath.Dir(execPath)
-	log.Printf("[DEBUG] Executable directory: %s", execDir)
-	possiblePaths := []string{
-		filepath.Join(execDir, "config.json.template"),
-		filepath.Join(execDir, "services", "templates", "config.json.template"),
-		"services/templates/config.json.template",
-	}
-	var templateData []byte
-	var templatePath string
-	var foundTemplate bool
-	for _, path := range possiblePaths {
-		log.Printf("[DEBUG] Trying template path: %s", path)
-		data, err := os.ReadFile(path)
-		if err == nil {
-			templateData = data
-			templatePath = path
-			foundTemplate = true
-			log.Printf("[INFO] Template found at: %s", path)
-			break
-		} else {
-			log.Printf("[DEBUG] Template not found at %s: %v", path, err)
-		}
-	}
-	if !foundTemplate {
-		log.Printf("[ERROR] Template file not found in any of the following locations:")
-		for _, path := range possiblePaths {
-			log.Printf("[ERROR]   - %s", path)
-		}
-		return fmt.Errorf("template file not found. Please ensure config.json.template exists in one of the expected locations")
-	}
-	log.Printf("[INFO] Using template from: %s", templatePath)
-	log.Printf("[DEBUG] Writing config file to: %s", configPath)
-	if err := os.WriteFile(configPath, templateData, 0644); err != nil {
-		log.Printf("[ERROR] Failed to write config file: %v", err)
-		return fmt.Errorf("failed to write config file: %v", err)
-	}
-	log.Printf("[INFO] TShock config.json initialized successfully: %s", configPath)
-	return nil
+	return fmt.Errorf("已停止使用本地模板初始化，请先启动对应版本的 TShock，由官方首次启动流程生成配置文件")
 }
 func GetPluginServerDir() string {
 	return filepath.Join(config.DataDir, "plugin-server")

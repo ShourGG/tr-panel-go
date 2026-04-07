@@ -231,9 +231,10 @@ func HandleRoomLogs(c *gin.Context) {
 		buffer := utils.GetPluginServerOutputBuffer()
 		if buffer != "" {
 			bufferMsg := map[string]interface{}{
-				"type":    "log",
-				"message": buffer,
-				"time":    time.Now().Format("15:04:05"),
+				"type":         "log",
+				"message":      buffer,
+				"lineComplete": false,
+				"time":         time.Now().Format("15:04:05"),
 			}
 			data, _ := json.Marshal(bufferMsg)
 			conn.WriteMessage(websocket.TextMessage, data)
@@ -371,9 +372,10 @@ func (c *LogClient) tailLogs() {
 			continue
 		}
 		logMsg := map[string]interface{}{
-			"type":    "log",
-			"message": line.Text,
-			"time":    time.Now().Format("15:04:05"),
+			"type":         "log",
+			"message":      line.Text,
+			"lineComplete": true,
+			"time":         time.Now().Format("15:04:05"),
 		}
 		data, _ := json.Marshal(logMsg)
 		select {
@@ -406,9 +408,10 @@ func (c *LogClient) sendHistoryLogs(logFile string) {
 	c.send <- data
 	for _, line := range lines {
 		logMsg := map[string]interface{}{
-			"type":    "log",
-			"message": line,
-			"time":    time.Now().Format("15:04:05"),
+			"type":         "log",
+			"message":      line,
+			"lineComplete": true,
+			"time":         time.Now().Format("15:04:05"),
 		}
 		data, _ := json.Marshal(logMsg)
 		c.send <- data
@@ -421,9 +424,10 @@ func BroadcastPluginServerLog(message string) {
 	for client := range logClients {
 		if client.roomID == 0 {
 			logMsg := map[string]interface{}{
-				"type":    "log",
-				"message": message,
-				"time":    time.Now().Format("15:04:05"),
+				"type":         "log",
+				"message":      message,
+				"lineComplete": false,
+				"time":         time.Now().Format("15:04:05"),
 			}
 			data, _ := json.Marshal(logMsg)
 			select {

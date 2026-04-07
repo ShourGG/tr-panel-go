@@ -1,7 +1,7 @@
 package services
+
 import (
 	"bytes"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"time"
 )
-//go:embed templates/*
-var templatesFS embed.FS
+
 type ConfigService struct {
 	tshockPath string
 }
+
 func NewConfigService(tshockPath string) *ConfigService {
 	return &ConfigService{
 		tshockPath: tshockPath,
@@ -28,35 +28,7 @@ func (s *ConfigService) InitializeConfig() error {
 	if err := os.MkdirAll(s.tshockPath, 0755); err != nil {
 		return fmt.Errorf("failed to create tshock directory: %v", err)
 	}
-	if err := s.copyTemplate("config.json.template", "config.json"); err != nil {
-		return fmt.Errorf("failed to copy config.json template: %v", err)
-	}
-	if err := s.copyTemplate("sscconfig.json.template", "sscconfig.json"); err != nil {
-		return fmt.Errorf("failed to copy sscconfig.json template: %v", err)
-	}
-	if err := s.copyTemplate("motd.txt.template", "motd.txt"); err != nil {
-		return fmt.Errorf("failed to copy motd.txt template: %v", err)
-	}
-	dirs := []string{"logs", "backups"}
-	for _, dir := range dirs {
-		dirPath := filepath.Join(s.tshockPath, dir)
-		if err := os.MkdirAll(dirPath, 0755); err != nil {
-			return fmt.Errorf("failed to create %s directory: %v", dir, err)
-		}
-	}
-	return nil
-}
-func (s *ConfigService) copyTemplate(templateName, targetName string) error {
-	targetPath := filepath.Join(s.tshockPath, targetName)
-	templatePath := filepath.Join("templates", templateName)
-	data, err := templatesFS.ReadFile(templatePath)
-	if err != nil {
-		return fmt.Errorf("failed to read template %s: %v", templateName, err)
-	}
-	if err := os.WriteFile(targetPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write target file %s: %v", targetName, err)
-	}
-	return nil
+	return fmt.Errorf("已停止使用本地模板初始化，请先启动对应版本的 TShock，由官方首次启动流程生成配置文件")
 }
 func (s *ConfigService) GetConfig() (map[string]interface{}, error) {
 	configPath := filepath.Join(s.tshockPath, "config.json")
