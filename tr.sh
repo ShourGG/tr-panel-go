@@ -207,20 +207,50 @@ restart_service() {
 # 更新面板
 update_panel() {
     check_root
-    echo -e "${GREEN}开始更新面板...${NC}"
-    systemctl stop $SERVICE_NAME
-    cd $INSTALL_DIR
-    rm -f tr-panel
+    echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
     
-    if command -v wget &> /dev/null; then
-        wget -O tr-panel $DOWNLOAD_URL
-    elif command -v curl &> /dev/null; then
-        curl -L -o tr-panel $DOWNLOAD_URL
+    # 提示用户先检查脚本是否为最新
+    REMOTE_SCRIPT_VER=$(timeout 2 curl -s --connect-timeout 2 --max-time 2 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh 2>/dev/null | grep '^SCRIPT_VERSION=' | head -1 | cut -d'"' -f2)
+    if [ -n "$REMOTE_SCRIPT_VER" ] && version_gt "$REMOTE_SCRIPT_VER" "$SCRIPT_VERSION"; then
+        echo -e "${YELLOW}提示：脚本有新版本 ($REMOTE_SCRIPT_VER)，建议先执行 [6] 更新脚本，以获取最新面板版本。${NC}"
+        read -p "仍然继续用当前脚本更新 ${VERSION}？(y/n): " confirm_ver
+        [ "$confirm_ver" != "y" ] && return
     fi
     
-    chmod +x tr-panel
-    systemctl start $SERVICE_NAME
-    echo -e "${GREEN}更新完成！${NC}"
+    systemctl stop $SERVICE_NAME
+    cd $INSTALL_DIR
+    
+    # 备份旧二进制，防止下载失败后无法回滚
+    if [ -f tr-panel ]; then
+        cp tr-panel tr-panel.bak
+        echo -e "${GREEN}已备份旧版本为 tr-panel.bak${NC}"
+    fi
+    
+    # 下载新版本（失败时自动回滚）
+    DOWNLOAD_OK=0
+    if command -v wget &> /dev/null; then
+        wget -O tr-panel.new "$DOWNLOAD_URL" && DOWNLOAD_OK=1
+    elif command -v curl &> /dev/null; then
+        curl -L -o tr-panel.new "$DOWNLOAD_URL" && DOWNLOAD_OK=1
+    fi
+    
+    if [ "$DOWNLOAD_OK" -eq 1 ] && [ -s tr-panel.new ]; then
+        mv tr-panel.new tr-panel
+        chmod +x tr-panel
+        rm -f tr-panel.bak
+        systemctl start $SERVICE_NAME
+        echo -e "${GREEN}更新完成！当前版本: ${VERSION}${NC}"
+    else
+        # 回滚
+        rm -f tr-panel.new
+        if [ -f tr-panel.bak ]; then
+            mv tr-panel.bak tr-panel
+            echo -e "${RED}下载失败，已自动回滚到旧版本，服务恢复运行${NC}"
+            systemctl start $SERVICE_NAME
+        else
+            echo -e "${RED}下载失败且无备份可回滚，请手动重新执行 [0] 安装${NC}"
+        fi
+    fi
 }
 
 # 强制更新
