@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -265,10 +265,15 @@ force_update() {
 # 更新脚本
 update_script() {
     echo -e "${GREEN}更新脚本...${NC}"
-    cd ~ && rm -f tr.sh
-    wget -O tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh
-    chmod +x tr.sh
-    echo -e "${GREEN}脚本已更新，请重新运行: ./tr.sh${NC}"
+    SCRIPT_URL="https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh?nocache=$(date +%s)"
+    SCRIPT_PATH=$(realpath "$0")
+    if command -v wget &> /dev/null; then
+        wget -q -O "$SCRIPT_PATH" "$SCRIPT_URL"
+    elif command -v curl &> /dev/null; then
+        curl -sL -o "$SCRIPT_PATH" "$SCRIPT_URL"
+    fi
+    chmod +x "$SCRIPT_PATH"
+    echo -e "${GREEN}脚本已更新至最新版本，请重新运行: $SCRIPT_PATH${NC}"
     exit 0
 }
 
