@@ -6,10 +6,10 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +22,8 @@ import (
 	"terraria-panel/config"
 	"terraria-panel/models"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -34,6 +36,42 @@ var (
 	modDownloadProgress = make(map[string]*models.DownloadProgress)
 	downloadingMutex    sync.RWMutex
 )
+
+// Steam Workshop API 缓存
+type workshopCacheEntry struct {
+	data     []byte
+	cachedAt time.Time
+}
+
+var (
+	workshopCache    = make(map[string]*workshopCacheEntry)
+	workshopCacheMu  sync.RWMutex
+	workshopCacheTTL = 5 * time.Minute
+)
+
+func getWorkshopCache(key string) ([]byte, bool) {
+	workshopCacheMu.RLock()
+	defer workshopCacheMu.RUnlock()
+	entry, ok := workshopCache[key]
+	if !ok || time.Since(entry.cachedAt) > workshopCacheTTL {
+		return nil, false
+	}
+	return entry.data, true
+}
+
+func setWorkshopCache(key string, data []byte) {
+	workshopCacheMu.Lock()
+	defer workshopCacheMu.Unlock()
+	workshopCache[key] = &workshopCacheEntry{data: data, cachedAt: time.Now()}
+	// 清理过期条目（超过50条时）
+	if len(workshopCache) > 50 {
+		for k, v := range workshopCache {
+			if time.Since(v.cachedAt) > workshopCacheTTL {
+				delete(workshopCache, k)
+			}
+		}
+	}
+}
 
 type commandLogBuffer struct {
 	mu    sync.Mutex
@@ -363,32 +401,40 @@ func SearchWorkshopMods(c *gin.Context) {
 	pageSize := c.DefaultQuery("pageSize", "20")
 	sortBy := c.DefaultQuery("sortBy", "trend_days")
 	var queryType string
-	switch sortBy {
-	case "total_subscriptions":
-		queryType = "13"
-	case "playtime_stats":
-		queryType = "14"
-	case "trend_days":
-		fallthrough
-	default:
-		queryType = "3"
-	}
-	var url string
-	if query == "" {
-		url = fmt.Sprintf(
-			"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%s&numperpage=%s&appid=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
-			STEAM_API_KEY, queryType, page, pageSize, TMODLOADER_APPID,
-		)
+	if query != "" {
+		// 有搜索关键词时使用文本搜索排序
+		queryType = "9"
 	} else {
-		url = fmt.Sprintf(
-			"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%s&numperpage=%s&appid=%s&search_text=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
-			STEAM_API_KEY, queryType, page, pageSize, TMODLOADER_APPID, query,
-		)
+		switch sortBy {
+		case "total_subscriptions":
+			queryType = "13"
+		case "playtime_stats":
+			queryType = "14"
+		case "trend_days":
+			fallthrough
+		default:
+			queryType = "3"
+		}
 	}
+	apiURL := fmt.Sprintf(
+		"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%s&numperpage=%s&appid=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
+		STEAM_API_KEY, queryType, page, pageSize, TMODLOADER_APPID,
+	)
+	if query != "" {
+		apiURL += "&search_text=" + url.QueryEscape(query)
+	}
+	cacheKey := fmt.Sprintf("%s|%s|%s|%s", queryType, query, page, pageSize)
+	if cached, ok := getWorkshopCache(cacheKey); ok {
+		log.Printf("✅ Steam API 缓存命中: sortBy=%s, query=%s, page=%s", sortBy, query, page)
+		c.Data(http.StatusOK, "application/json", cached)
+		return
+	}
+
 	log.Printf("🔍 Steam API请求: sortBy=%s, query=%s, page=%s, pageSize=%s", sortBy, query, page, pageSize)
-	resp, err := http.Get(url)
+	steamClient := &http.Client{Timeout: 15 * time.Second}
+	resp, err := steamClient.Get(apiURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
 		return
 	}
 	defer resp.Body.Close()
@@ -509,10 +555,15 @@ func SearchWorkshopMods(c *gin.Context) {
 		actualTotal = 10000
 		log.Printf("⚠️ 总数超过10000，限制为: 10000")
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	responseData := models.SuccessResponse(gin.H{
 		"total": actualTotal,
 		"items": items,
-	}))
+	})
+	// 缓存响应
+	if jsonBytes, err := json.Marshal(responseData); err == nil {
+		setWorkshopCache(cacheKey, jsonBytes)
+	}
+	c.JSON(http.StatusOK, responseData)
 }
 func GetDownloadingMods(c *gin.Context) {
 	downloadingMutex.RLock()
