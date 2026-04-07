@@ -37,14 +37,25 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.0.5"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
-VERSION="v1.1.0"
-DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
+FALLBACK_VERSION="v1.1.0"
 PORT=8800
+
+# 从 GitHub API 获取最新版本号
+get_latest_version() {
+    LATEST=$(timeout 5 curl -s --connect-timeout 5 --max-time 5 \
+        https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest \
+        2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    if [ -z "$LATEST" ]; then
+        echo "$FALLBACK_VERSION"
+    else
+        echo "$LATEST"
+    fi
+}
 
 # 颜色定义
 RED='\033[0;31m'
@@ -137,6 +148,8 @@ install_service() {
     mkdir -p $INSTALL_DIR
     cd $INSTALL_DIR
 
+    VERSION=$(get_latest_version)
+    DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
     echo -e "${GREEN}[2/5] 下载 TR Panel ${VERSION}...${NC}"
     if command -v wget &> /dev/null; then
         wget -O tr-panel $DOWNLOAD_URL
@@ -207,15 +220,9 @@ restart_service() {
 # 更新面板
 update_panel() {
     check_root
+    VERSION=$(get_latest_version)
+    DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
     echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
-    
-    # 提示用户先检查脚本是否为最新
-    REMOTE_SCRIPT_VER=$(timeout 2 curl -s --connect-timeout 2 --max-time 2 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh 2>/dev/null | grep '^SCRIPT_VERSION=' | head -1 | cut -d'"' -f2)
-    if [ -n "$REMOTE_SCRIPT_VER" ] && version_gt "$REMOTE_SCRIPT_VER" "$SCRIPT_VERSION"; then
-        echo -e "${YELLOW}提示：脚本有新版本 ($REMOTE_SCRIPT_VER)，建议先执行 [6] 更新脚本，以获取最新面板版本。${NC}"
-        read -p "仍然继续用当前脚本更新 ${VERSION}？(y/n): " confirm_ver
-        [ "$confirm_ver" != "y" ] && return
-    fi
     
     systemctl stop $SERVICE_NAME
     cd $INSTALL_DIR
