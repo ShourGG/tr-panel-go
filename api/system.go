@@ -2,11 +2,15 @@ package api
 
 import (
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -607,7 +611,117 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.1.3"
+	return "1.1.4"
+}
+
+// SelfUpgrade handles POST /system/upgrade
+func SelfUpgrade(c *gin.Context) {
+	currentVersion := getPanelVersion()
+
+	// 1. Fetch latest release info
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法连接 GitHub: "+err.Error()))
+		return
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("解析 GitHub 响应失败: "+err.Error()))
+		return
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	if latestVersion == currentVersion {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已是最新版本 " + currentVersion, "upgraded": false})
+		return
+	}
+
+	// 2. Find binary asset
+	var downloadURL string
+	for _, a := range release.Assets {
+		if a.Name == "terraria-panel" {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到可下载的二进制文件"))
+		return
+	}
+
+	// 3. Get current binary path
+	execPath, err := os.Executable()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法获取当前程序路径: "+err.Error()))
+		return
+	}
+	execPath, _ = filepath.EvalSymlinks(execPath)
+	backupPath := execPath + ".bak"
+	tmpPath := execPath + ".new"
+
+	// 4. Download new binary
+	log.Printf("[升级] 正在从 %s 下载 %s ...", downloadURL, release.TagName)
+	dlResp, err := client.Get(downloadURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败: "+err.Error()))
+		return
+	}
+	defer dlResp.Body.Close()
+
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建临时文件失败: "+err.Error()))
+		return
+	}
+	written, err := io.Copy(tmpFile, dlResp.Body)
+	tmpFile.Close()
+	if err != nil || written < 1024*1024 {
+		os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("下载不完整 (%d bytes): %v", written, err)))
+		return
+	}
+
+	// 5. Backup -> Replace
+	os.Remove(backupPath)
+	if err := os.Rename(execPath, backupPath); err != nil {
+		os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份当前版本失败: "+err.Error()))
+		return
+	}
+	if err := os.Rename(tmpPath, execPath); err != nil {
+		// Rollback
+		os.Rename(backupPath, execPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("替换二进制失败: "+err.Error()))
+		return
+	}
+	os.Chmod(execPath, 0755)
+
+	log.Printf("[升级] 二进制已替换，版本 %s -> %s，即将重启服务...", currentVersion, latestVersion)
+
+	// 6. Respond first, then restart
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"upgraded":   true,
+		"message":    fmt.Sprintf("升级成功 %s → %s，正在重启服务...", currentVersion, latestVersion),
+		"oldVersion": currentVersion,
+		"newVersion": latestVersion,
+	})
+
+	// Schedule restart after response is sent
+	go func() {
+		time.Sleep(1 * time.Second)
+		log.Printf("[升级] 执行 systemctl restart tr-panel ...")
+		exec.Command("systemctl", "restart", "tr-panel").Run()
+	}()
 }
 
 func getServerVersionInfo(serverType string) (string, string) {
