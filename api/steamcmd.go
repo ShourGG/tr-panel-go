@@ -8,11 +8,41 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"terraria-panel/config"
 	"terraria-panel/models"
 
 	"github.com/gin-gonic/gin"
 )
+
+// ---------- 依赖安装后台任务 ----------
+
+type depsInstallState struct {
+	mu       sync.Mutex
+	Running  bool   `json:"running"`
+	Step     int    `json:"step"`     // 当前步骤 (1-based)
+	Total    int    `json:"total"`    // 总步骤数
+	StepName string `json:"stepName"` // 当前步骤描述
+	Done     bool   `json:"done"`
+	Success  bool   `json:"success"`
+	Error    string `json:"error"`
+}
+
+var depsState = &depsInstallState{}
+
+func GetDepsInstallStatus(c *gin.Context) {
+	depsState.mu.Lock()
+	defer depsState.mu.Unlock()
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"running":  depsState.Running,
+		"step":     depsState.Step,
+		"total":    depsState.Total,
+		"stepName": depsState.StepName,
+		"done":     depsState.Done,
+		"success":  depsState.Success,
+		"error":    depsState.Error,
+	}))
+}
 
 func getSteamCMDPaths() (string, string, string) {
 	steamcmdDir := filepath.Join(config.DataDir, "steamcmd")
@@ -95,22 +125,65 @@ func InstallDepsAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, models.MessageResponse("非 Linux 系统，无需安装依赖"))
 		return
 	}
-	commands := [][]string{
-		{"dpkg", "--add-architecture", "i386"},
-		{"apt-get", "update", "-y"},
-		{"apt-get", "install", "-y", "lib32gcc-s1", "lib32stdc++6"},
+
+	depsState.mu.Lock()
+	if depsState.Running {
+		depsState.mu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "安装已在进行中", "running": true})
+		return
 	}
-	for _, args := range commands {
-		cmd := exec.Command(args[0], args[1:]...)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-				fmt.Sprintf("命令 [%s] 执行失败: %v\n%s", args[0], err, string(output)),
-			))
-			return
+	depsState.Running = true
+	depsState.Step = 0
+	depsState.Total = 3
+	depsState.StepName = "准备中..."
+	depsState.Done = false
+	depsState.Success = false
+	depsState.Error = ""
+	depsState.mu.Unlock()
+
+	go func() {
+		type step struct {
+			name string
+			args []string
 		}
-	}
-	c.JSON(http.StatusOK, models.MessageResponse("32位依赖安装成功，请刷新状态"))
+		steps := []step{
+			{"添加 i386 架构", []string{"dpkg", "--add-architecture", "i386"}},
+			{"更新软件包列表", []string{"apt-get", "update", "-y"}},
+			{"安装 32 位依赖库", []string{"apt-get", "install", "-y", "lib32gcc-s1", "lib32stdc++6"}},
+		}
+		for i, s := range steps {
+			depsState.mu.Lock()
+			depsState.Step = i + 1
+			depsState.StepName = s.name
+			depsState.mu.Unlock()
+
+			log.Printf("[依赖安装] 步骤 %d/%d: %s", i+1, len(steps), s.name)
+			cmd := exec.Command(s.args[0], s.args[1:]...)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				errMsg := fmt.Sprintf("步骤 [%s] 失败: %v\n%s", s.name, err, string(output))
+				log.Printf("[依赖安装] %s", errMsg)
+				depsState.mu.Lock()
+				depsState.Running = false
+				depsState.Done = true
+				depsState.Success = false
+				depsState.Error = errMsg
+				depsState.mu.Unlock()
+				return
+			}
+		}
+		log.Printf("[依赖安装] 全部完成")
+		depsState.mu.Lock()
+		depsState.Running = false
+		depsState.Done = true
+		depsState.Success = true
+		depsState.Step = depsState.Total
+		depsState.StepName = "安装完成"
+		depsState.Error = ""
+		depsState.mu.Unlock()
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "开始安装依赖...", "running": true})
 }
 
 func InstallSteamCMDAPI(c *gin.Context) {

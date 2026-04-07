@@ -56,6 +56,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.GET("/steamcmd/status", GetSteamCMDStatus)
 			protected.POST("/steamcmd/install", InstallSteamCMDAPI)
 			protected.POST("/steamcmd/install-deps", InstallDepsAPI)
+			protected.GET("/steamcmd/install-deps-status", GetDepsInstallStatus)
 			protected.GET("/logs/panel", GetPanelLogs)
 			protected.GET("/logs/server/:id", GetServerLogs)
 			protected.GET("/logs/server/:id/files", GetServerLogFiles)
