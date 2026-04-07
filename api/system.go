@@ -900,10 +900,14 @@ func GetSystemInfo(c *gin.Context) {
 		"roomId":           serverInfo["roomId"],
 		"runningRooms":     serverInfo["runningRooms"],
 		"goroutine":        runtime.NumGoroutine(),
+		"goVersion":        runtime.Version(),
 		"goMemory": gin.H{
-			"alloc":      m.Alloc / 1024 / 1024,
-			"totalAlloc": m.TotalAlloc / 1024 / 1024,
-			"sys":        m.Sys / 1024 / 1024,
+			"alloc":        float64(m.Alloc) / 1024 / 1024,
+			"heapAlloc":    float64(m.HeapAlloc) / 1024 / 1024,
+			"totalAlloc":   float64(m.TotalAlloc) / 1024 / 1024,
+			"sys":          float64(m.Sys) / 1024 / 1024,
+			"numGC":        m.NumGC,
+			"numGoroutine": runtime.NumGoroutine(),
 		},
 	}))
 }
