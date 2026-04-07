@@ -607,7 +607,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.1.1"
+	return "1.1.2"
 }
 
 func getServerVersionInfo(serverType string) (string, string) {
