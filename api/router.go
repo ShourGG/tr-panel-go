@@ -2,12 +2,13 @@ package api
 
 import (
 	"embed"
-	"github.com/gin-gonic/gin"
 	"io/fs"
 	"net/http"
 	"path"
 	"strings"
 	"terraria-panel/middleware"
+
+	"github.com/gin-gonic/gin"
 )
 
 func SetupRouter(webFS embed.FS) *gin.Engine {
@@ -53,6 +54,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.GET("/steamcmd/check", CheckSteamCMD)
 			protected.GET("/steamcmd/status", GetSteamCMDStatus)
 			protected.POST("/steamcmd/install", InstallSteamCMDAPI)
+			protected.POST("/steamcmd/install-deps", InstallDepsAPI)
 			protected.GET("/logs/panel", GetPanelLogs)
 			protected.GET("/logs/server/:id", GetServerLogs)
 			protected.GET("/logs/server/:id/files", GetServerLogFiles)

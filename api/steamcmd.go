@@ -1,4 +1,5 @@
 package api
+
 import (
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"terraria-panel/config"
 	"terraria-panel/models"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,8 +68,8 @@ func CheckSteamCMD(c *gin.Context) {
 		depCheckCmd := exec.Command("dpkg", "-l", "lib32gcc-s1")
 		if err := depCheckCmd.Run(); err != nil {
 			c.JSON(http.StatusOK, gin.H{
-				"installed":       false,
-				"deps_missing":    true,
+				"installed":    false,
+				"deps_missing": true,
 				"deps_commands": []string{
 					"sudo dpkg --add-architecture i386",
 					"sudo apt-get update",
@@ -79,15 +81,38 @@ func CheckSteamCMD(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"installed":       installed,
-		"ready":           false,
-		"path":            steamcmdPath,
-		"runtime_path":    runtimePath,
-		"needs_repair":    installed,
-		"can_install": true,
-		"message":         stateMessage,
+		"installed":    installed,
+		"ready":        false,
+		"path":         steamcmdPath,
+		"runtime_path": runtimePath,
+		"needs_repair": installed,
+		"can_install":  true,
+		"message":      stateMessage,
 	})
 }
+func InstallDepsAPI(c *gin.Context) {
+	if runtime.GOOS != "linux" {
+		c.JSON(http.StatusOK, models.MessageResponse("非 Linux 系统，无需安装依赖"))
+		return
+	}
+	commands := [][]string{
+		{"dpkg", "--add-architecture", "i386"},
+		{"apt-get", "update", "-y"},
+		{"apt-get", "install", "-y", "lib32gcc-s1", "lib32stdc++6"},
+	}
+	for _, args := range commands {
+		cmd := exec.Command(args[0], args[1:]...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(
+				fmt.Sprintf("命令 [%s] 执行失败: %v\n%s", args[0], err, string(output)),
+			))
+			return
+		}
+	}
+	c.JSON(http.StatusOK, models.MessageResponse("32位依赖安装成功，请刷新状态"))
+}
+
 func InstallSteamCMDAPI(c *gin.Context) {
 	installed, ready, _, _, _ := getSteamCMDState()
 	if ready {
