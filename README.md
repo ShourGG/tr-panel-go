@@ -1,132 +1,177 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/.github/terraria-logo.png" width="80" alt="TR Panel Logo" />
+
 # TR Panel Go
 
-轻量且高性能的泰拉瑞亚服务器管理面板后端，使用 Go 语言构建。
+**轻量、高性能的泰拉瑞亚服务器管理面板**
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/network)
-[![GitHub Issues](https://img.shields.io/github/issues/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/issues)
-[![GitHub Last Commit](https://img.shields.io/github/last-commit/ShourGG/tr-panel-go?style=flat&logo=github)](https://github.com/ShourGG/tr-panel-go/commits)
-[![Code Size](https://img.shields.io/github/languages/code-size/ShourGG/tr-panel-go?style=flat)](https://github.com/ShourGG/tr-panel-go)
-[![Top Language](https://img.shields.io/github/languages/top/ShourGG/tr-panel-go?style=flat)](https://github.com/ShourGG/tr-panel-go)
+*基于 Go 构建 · 单文件部署 · 开箱即用*
+
+<br/>
+
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
+[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey?style=for-the-badge)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ShourGG/tr-panel-go?style=for-the-badge&color=brightgreen&logo=github)](https://github.com/ShourGG/tr-panel-go/releases)
+
+[![Stars](https://img.shields.io/github/stars/ShourGG/tr-panel-go?style=flat-square&logo=github&label=Stars)](https://github.com/ShourGG/tr-panel-go/stargazers)
+[![Forks](https://img.shields.io/github/forks/ShourGG/tr-panel-go?style=flat-square&logo=github&label=Forks)](https://github.com/ShourGG/tr-panel-go/network)
+[![Issues](https://img.shields.io/github/issues/ShourGG/tr-panel-go?style=flat-square&logo=github&label=Issues)](https://github.com/ShourGG/tr-panel-go/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/ShourGG/tr-panel-go?style=flat-square&logo=github&label=Last%20Commit)](https://github.com/ShourGG/tr-panel-go/commits)
+[![Code Size](https://img.shields.io/github/languages/code-size/ShourGG/tr-panel-go?style=flat-square&label=Code%20Size)](https://github.com/ShourGG/tr-panel-go)
+[![Top Language](https://img.shields.io/github/languages/top/ShourGG/tr-panel-go?style=flat-square)](https://github.com/ShourGG/tr-panel-go)
+
+<br/>
+
+[快速安装](#-快速安装) · [界面预览](#-界面预览) · [功能特性](#-功能特性) · [技术栈](#-技术栈) · [问题反馈](https://github.com/ShourGG/tr-panel-go/issues)
+
+</div>
 
 ---
 
-## 快速安装
+## ✨ 项目简介
 
-**系统要求：** Ubuntu 24+ （低版本可能出现 GLIBC 版本报错）
+**TR Panel Go** 是一款专为泰拉瑞亚游戏服务器设计的 Web 管理面板，提供直观的可视化界面与强大的后端支撑。
 
-**一键安装：**
+- 🚀 **高性能**：Go 原生并发，API 响应 ~100ms，页面加载 ~78ms
+- 📦 **零依赖部署**：前端静态资源内嵌进单一可执行文件，`wget` 即装即用
+- 🎮 **双模式支持**：原版泰拉瑞亚房间管理 + TShock 插件服模式无缝切换
+- 🌐 **国际化**：完整中英文双语界面
+- 🔔 **版本自检**：面板与脚本均支持自动检测新版本并提示更新
+
+---
+
+## ⚡ 快速安装
+
+> **系统要求：** Ubuntu 24.04+（低版本可能出现 GLIBC 兼容性报错）
+
+**一键安装（wget）**
 
 ```bash
 wget -O tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
 ```
 
-或使用 curl：
+**一键安装（curl）**
 
 ```bash
 curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
 ```
 
-运行后选择 **[0]** 下载并启动服务，默认端口：**8800**
+运行后选择 **`[0] 下载并启动`**，默认访问端口：**`8800`**
 
 ---
 
-## 界面预览
+## 🖼 界面预览
 
-**登录界面**
-
-![登录页面](.github/login.png)
-
-**仪表盘**
-
-![仪表盘](.github/dashboard.png)
-
-**插件服务器管理**
-
-![插件服务器](.github/plugin-server.png)
-
-**安装脚本菜单**
-
-![脚本菜单](.github/script-menu.png)
-
----
-
-## 项目简介
-
-泰拉瑞亚游戏服务器管理后端，提供 RESTful API 和 WebSocket 实时通信，支持服务器监控、玩家管理、插件管理和自动化任务调度。
+<table>
+  <tr>
+    <td align="center"><b>登录界面</b></td>
+    <td align="center"><b>仪表盘</b></td>
+  </tr>
+  <tr>
+    <td><img src=".github/login.png" alt="登录页面"/></td>
+    <td><img src=".github/dashboard.png" alt="仪表盘"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>插件服务器管理</b></td>
+    <td align="center"><b>安装脚本菜单</b></td>
+  </tr>
+  <tr>
+    <td><img src=".github/plugin-server.png" alt="插件服务器"/></td>
+    <td><img src=".github/script-menu.png" alt="脚本菜单"/></td>
+  </tr>
+</table>
 
 ---
 
-## 核心特性
+## 🔧 功能特性
 
-**性能**
-- Go 原生高性能，API 响应 ~100ms
-- 数据库索引优化，查询性能提升 50-80%
-- 页面加载 ~78ms，LCP ~105ms
+### 服务器管理
+- 多房间实例创建、启停控制与状态监控
+- WebSocket 实时日志推送，延迟 <50ms
+- TShock 版本自动检测与适配
 
-**架构**
-- RESTful API + WebSocket 实时推送
-- 分层设计，业务与数据解耦
-- SQLite 轻量存储，单文件部署
+### 玩家管理
+- 在线玩家列表与实时状态
+- 会话记录、历史统计、活动审计
+- 踢出、封禁等管理操作
 
-**功能**
-- TShock 插件服务器支持
-- 玩家统计和会话追踪
-- 自动备份和定时任务
-- JWT 认证和权限控制
+### 插件生态
+- 插件安装、卸载、热重载
+- 插件配置文件可视化编辑（Monaco Editor）
+- TShock 数据库直连管理
 
----
-
-## 主要功能
-
-**服务器管理**：启停控制、实时监控、日志查看、多房间支持
-
-**玩家管理**：会话记录、统计分析、活动追踪、行为审计
-
-**插件管理**：安装卸载、配置编辑、版本管理、依赖处理
-
-**系统功能**：文件管理、备份恢复、定时任务、资源监控
+### 系统功能
+- 在线文件管理器（上传 / 下载 / 编辑 / 删除）
+- 自动备份与一键恢复
+- 定时任务调度（cron 表达式）
+- CPU / 内存 / 磁盘 / 网络实时监控图表
 
 ---
 
-## 技术栈
+## 🛠 技术栈
 
-| 技术 | 说明 |
+| 层级 | 技术 |
 |------|------|
-| 语言 | Go 1.21+ |
-| 框架 | Gin + gorilla/websocket |
+| 后端语言 | Go 1.21+ |
+| Web 框架 | Gin |
+| 实时通信 | gorilla/websocket |
 | 数据库 | SQLite 3 |
 | 认证 | JWT Token |
-| 调度 | robfig/cron |
+| 任务调度 | robfig/cron |
+| 前端框架 | Vue 3 + TypeScript |
+| UI 组件 | Tailwind CSS + shadcn/ui |
+| 代码编辑器 | Monaco Editor |
+| 图表 | ECharts |
 
 ---
 
-## 性能优化
+## 📊 性能基准
 
-**数据库**：多表索引优化，查询性能提升 50-80%
-
-**前端**：代码分包（Vue/Ant Design/Monaco/ECharts）
-
-**代码**：移除 console.log，Terser 压缩
-
----
-
-## 开源协议
-
-本项目采用 CC BY-NC 4.0 协议，详见 [LICENSE](LICENSE) 文件。
-
-**禁止商业使用** - 不得用于盈利项目或商业产品
+| 指标 | 数值 |
+|------|------|
+| API 平均响应时间 | ~100ms |
+| 页面首次加载 | ~78ms |
+| LCP（最大内容渲染） | ~105ms |
+| 数据库查询优化幅度 | 50–80% |
+| 打包产物大小 | ~15MB（含完整前端） |
 
 ---
 
-## 作者
+## 📋 脚本管理菜单
 
-由 [ShourGG](https://github.com/ShourGG) 开发维护
+```
+[0]  下载并启动服务     [1]  启动服务
+[2]  停止服务          [3]  重启服务
+[4]  更新面板          [5]  强制更新
+[6]  更新脚本          [7]  查看状态
+[8]  查看日志          [9]  修改端口
+[10] 卸载面板          [11] 退出
+```
+
+> 脚本会在每次启动时**自动检测自身是否有新版本**，有更新时醒目提示。
 
 ---
 
-## 问题反馈
+## 📄 开源协议
 
-https://github.com/ShourGG/tr-panel-go/issues
+本项目采用 [CC BY-NC 4.0](LICENSE) 协议。
+
+- ✅ 允许个人学习、非商业使用与二次分发
+- ❌ **禁止商业使用** — 不得用于盈利项目或商业产品
+
+---
+
+## 👤 作者
+
+由 **[ShourGG](https://github.com/ShourGG)** 独立开发与维护。
+
+如果这个项目对你有帮助，欢迎点个 ⭐ Star 支持一下！
+
+---
+
+<div align="center">
+
+**[⬆ 回到顶部](#tr-panel-go)**
+
+</div>
