@@ -37,23 +37,24 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.8"
+SCRIPT_VERSION="1.0.9"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
-FALLBACK_VERSION="v1.1.1"
 PORT=8800
 
-# 从 GitHub API 获取最新版本号
+# 从 GitHub API 获取最新版本号（失败则报错退出，不使用写死的兜底版本）
 get_latest_version() {
-    LATEST=$(timeout 5 curl -s --connect-timeout 5 --max-time 5 \
+    LATEST=$(timeout 10 curl -s --connect-timeout 5 --max-time 10 \
         https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest \
         2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
     if [ -z "$LATEST" ]; then
-        echo "$FALLBACK_VERSION"
+        echo ""
+        return 1
     else
         echo "$LATEST"
+        return 0
     fi
 }
 
@@ -149,6 +150,10 @@ install_service() {
     cd $INSTALL_DIR
 
     VERSION=$(get_latest_version)
+    if [ -z "$VERSION" ]; then
+        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接${NC}"
+        exit 1
+    fi
     DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
     echo -e "${GREEN}[2/5] 下载 TR Panel ${VERSION}...${NC}"
     if command -v wget &> /dev/null; then
@@ -234,6 +239,10 @@ restart_service() {
 update_panel() {
     check_root
     VERSION=$(get_latest_version)
+    if [ -z "$VERSION" ]; then
+        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接${NC}"
+        exit 1
+    fi
     DOWNLOAD_URL="https://github.com/ShourGG/tr-panel-go/releases/download/${VERSION}/terraria-panel"
     echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
     
