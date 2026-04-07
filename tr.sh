@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.0.6"
+SCRIPT_VERSION="1.0.7"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -164,6 +164,13 @@ install_service() {
     chmod +x tr-panel
 
     echo -e "${GREEN}[4/5] 创建 systemd 服务...${NC}"
+    # 生成随机 JWT_SECRET（若服务文件已存在则复用旧密钥）
+    EXISTING_SECRET=$(grep 'JWT_SECRET=' /etc/systemd/system/${SERVICE_NAME}.service 2>/dev/null | cut -d'"' -f2 | cut -d'=' -f2)
+    if [ -n "$EXISTING_SECRET" ]; then
+        JWT_SECRET="$EXISTING_SECRET"
+    else
+        JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || cat /proc/sys/kernel/random/uuid | tr -d '-' | head -c 64)
+    fi
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=TR Panel Go Service
@@ -177,6 +184,7 @@ ExecStart=$INSTALL_DIR/tr-panel
 Restart=always
 RestartSec=10
 Environment="PORT=$PORT"
+Environment="JWT_SECRET=$JWT_SECRET"
 
 [Install]
 WantedBy=multi-user.target
