@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -49,8 +49,8 @@ PORT=8800
 MIRRORS=(
     "GitHub 官方 (直连)|https://api.github.com|https://github.com|https://raw.githubusercontent.com"
     "ghfast.top|https://api.github.com|https://ghfast.top/https://github.com|https://ghfast.top/https://raw.githubusercontent.com"
-    "gh-proxy.com|https://api.github.com|https://gh-proxy.com/https://github.com|https://gh-proxy.com/https://raw.githubusercontent.com"
-    "ghproxy.cn|https://api.github.com|https://ghproxy.cn/https://github.com|https://ghproxy.cn/https://raw.githubusercontent.com"
+    "cors.isteed.cc|https://api.github.com|https://cors.isteed.cc/https://github.com|https://cors.isteed.cc/https://raw.githubusercontent.com"
+    "gh.noki.icu|https://api.github.com|https://gh.noki.icu/https://github.com|https://gh.noki.icu/https://raw.githubusercontent.com"
 )
 
 # 当前选中的镜像索引（默认 0 = 直连）

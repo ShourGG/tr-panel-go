@@ -28,10 +28,8 @@ const (
 
 var githubMirrors = []string{
 	"https://ghfast.top/",
-	"https://gh-proxy.com/",
-	"https://ghproxy.cn/",
-	"https://ghproxy.com/",
-	"https://mirror.ghproxy.com/",
+	"https://cors.isteed.cc/",
+	"https://gh.noki.icu/",
 }
 var (
 	downloadProgress = make(map[string]*models.DownloadProgress)
