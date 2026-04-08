@@ -1,0 +1,1 @@
+function t(t){var o;if("undefined"==typeof window)return t;const s=`${"https:"===window.location.protocol?"wss:":"ws:"}//${window.location.host}`,n=t.startsWith("ws://")||t.startsWith("wss://")?t:`${t.startsWith("/")?"":"/"}${t}`,r=new URL(n,s),e=null==(o=localStorage.getItem("token"))?void 0:o.trim();return e&&r.searchParams.set("token",e),r.toString()}export{t as b};
