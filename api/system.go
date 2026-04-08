@@ -554,7 +554,7 @@ func detectPublicIP() string {
 }
 
 func getDiskInfo() ([]gin.H, float64) {
-	cmd := exec.Command("df", "-B1", "-P")
+	cmd := exec.Command("df", "-B1", "-PT")
 	output, err := cmd.Output()
 	if err != nil {
 		return []gin.H{}, 0
@@ -565,35 +565,53 @@ func getDiskInfo() ([]gin.H, float64) {
 		return []gin.H{}, 0
 	}
 
+	skipFsTypes := map[string]bool{
+		"tmpfs": true, "devtmpfs": true, "squashfs": true,
+		"efivarfs": true, "overlay": true, "none": true,
+	}
+
 	disks := make([]gin.H, 0, len(lines)-1)
 	rootUsage := 0.0
 
 	for _, line := range lines[1:] {
 		fields := strings.Fields(line)
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			continue
 		}
 
+		fstype := fields[1]
 		mount := fields[len(fields)-1]
+
+		if skipFsTypes[fstype] {
+			continue
+		}
 		if mount == "/snap" || strings.HasPrefix(mount, "/snap/") {
 			continue
 		}
+		if mount == "/boot/efi" || mount == "/boot" {
+			continue
+		}
 
-		total, err1 := strconv.ParseUint(fields[1], 10, 64)
-		used, err2 := strconv.ParseUint(fields[2], 10, 64)
-		avail, err3 := strconv.ParseUint(fields[3], 10, 64)
+		total, err1 := strconv.ParseUint(fields[2], 10, 64)
+		used, err2 := strconv.ParseUint(fields[3], 10, 64)
+		avail, err3 := strconv.ParseUint(fields[4], 10, 64)
 		if err1 != nil || err2 != nil || err3 != nil || total == 0 {
+			continue
+		}
+
+		if total < 1*1024*1024*1024 {
 			continue
 		}
 
 		usedPercent := float64(used) / float64(total) * 100
 		disks = append(disks, gin.H{
-			"filesystem":  fields[0],
-			"mount":       mount,
-			"total":       total,
-			"used":        used,
-			"free":        avail,
-			"usedPercent": usedPercent,
+			"device":       fields[0],
+			"fstype":       fstype,
+			"mountpoint":   mount,
+			"total":        total,
+			"used":         used,
+			"free":         avail,
+			"usagePercent": usedPercent,
 		})
 
 		if mount == "/" {
@@ -602,7 +620,7 @@ func getDiskInfo() ([]gin.H, float64) {
 	}
 
 	if rootUsage == 0 && len(disks) > 0 {
-		if percent, ok := disks[0]["usedPercent"].(float64); ok {
+		if percent, ok := disks[0]["usagePercent"].(float64); ok {
 			rootUsage = percent
 		}
 	}
@@ -611,7 +629,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.4"
+	return "1.3.5"
 }
 
 // SelfUpgrade handles POST /system/upgrade
