@@ -131,6 +131,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.POST("/files/write", WriteFile)
 			protected.POST("/files/upload", UploadFile)
 			protected.POST("/files/extract", ExtractFile)
+			protected.POST("/files/rename", RenameFile)
 			protected.DELETE("/files", DeleteFile)
 			protected.GET("/backups", GetBackups)
 			protected.POST("/backups", CreateBackup)

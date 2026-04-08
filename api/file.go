@@ -439,6 +439,44 @@ func UploadFile(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(responseData))
 }
 
+func RenameFile(c *gin.Context) {
+	var req struct {
+		OldPath string `json:"oldPath"`
+		NewPath string `json:"newPath"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	if strings.TrimSpace(req.OldPath) == "" || strings.TrimSpace(req.NewPath) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("缺少路径参数"))
+		return
+	}
+	oldFull, err := resolveDataPath(req.OldPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("非法源路径"))
+		return
+	}
+	newFull, err := resolveDataPath(req.NewPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("非法目标路径"))
+		return
+	}
+	if _, err := os.Stat(oldFull); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("源文件不存在"))
+		return
+	}
+	if _, err := os.Stat(newFull); err == nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse("目标文件已存在"))
+		return
+	}
+	if err := os.Rename(oldFull, newFull); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("重命名失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, models.MessageResponse("重命名成功"))
+}
+
 func DeleteFile(c *gin.Context) {
 	relativePath := c.Query("path")
 	if relativePath == "" {
