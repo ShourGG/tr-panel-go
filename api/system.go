@@ -611,7 +611,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.1"
+	return "1.3.2"
 }
 
 // SelfUpgrade handles POST /system/upgrade
