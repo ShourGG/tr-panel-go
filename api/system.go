@@ -17,6 +17,7 @@ import (
 	"sync"
 	"terraria-panel/config"
 	"terraria-panel/models"
+	"terraria-panel/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -704,50 +705,26 @@ func SelfUpgrade(c *gin.Context) {
 	backupPath := execPath + ".bak"
 	tmpPath := execPath + ".new"
 
-	// 4. Download new binary (try direct first, then mirrors)
-	dlClient := &http.Client{Timeout: 120 * time.Second}
-	tryURLs := []string{downloadURL}
-	for _, mirror := range githubMirrors {
-		tryURLs = append(tryURLs, mirror+downloadURL)
-	}
-	var dlResp *http.Response
-	var dlErr error
-	var usedURL string
-	for _, tryURL := range tryURLs {
-		log.Printf("[升级] 尝试下载: %s", tryURL)
-		dlResp, dlErr = dlClient.Get(tryURL)
-		if dlErr == nil && dlResp.StatusCode == http.StatusOK {
-			usedURL = tryURL
-			break
-		}
-		if dlResp != nil {
-			dlResp.Body.Close()
-		}
-		log.Printf("[升级] %s 失败，尝试下一个...", tryURL)
-	}
-	if dlErr != nil || dlResp == nil {
-		errMsg := "所有下载源均失败"
-		if dlErr != nil {
-			errMsg += ": " + dlErr.Error()
-		}
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(errMsg))
-		return
-	}
-	defer dlResp.Body.Close()
-	log.Printf("[升级] 正在从 %s 下载 %s ...", usedURL, release.TagName)
-
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建临时文件失败: "+err.Error()))
-		return
-	}
-	written, err := io.Copy(tmpFile, dlResp.Body)
-	tmpFile.Close()
-	if err != nil || written < 1024*1024 {
+	// 4. Download new binary
+	cfg := config.Load()
+	downloadOpts := utils.GetDownloadConfig(cfg, downloadURL, tmpPath, nil)
+	if err := utils.DownloadWithRetry(downloadOpts); err != nil {
 		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("下载不完整 (%d bytes): %v", written, err)))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败: "+err.Error()))
 		return
 	}
+	tmpInfo, err := os.Stat(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("检查下载文件失败: "+err.Error()))
+		return
+	}
+	if tmpInfo.Size() < 1024*1024 {
+		os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("下载不完整 (%d bytes)", tmpInfo.Size())))
+		return
+	}
+	log.Printf("[升级] 下载完成，版本 %s，文件大小 %d bytes", release.TagName, tmpInfo.Size())
 
 	// 5. Backup -> Replace
 	os.Remove(backupPath)
