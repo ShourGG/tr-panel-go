@@ -629,18 +629,36 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.7"
+	return "1.3.8"
 }
 
 // SelfUpgrade handles POST /system/upgrade
 func SelfUpgrade(c *gin.Context) {
 	currentVersion := getPanelVersion()
 
-	// 1. Fetch latest release info
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get("https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法连接 GitHub: "+err.Error()))
+	// 1. Fetch latest release info (try direct first, then API-capable mirrors)
+	const githubAPIPath = "https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest"
+	apiURLs := []string{
+		githubAPIPath,
+		"https://cors.isteed.cc/" + githubAPIPath,
+		"https://gh.noki.icu/" + githubAPIPath,
+	}
+	apiClient := &http.Client{Timeout: 15 * time.Second}
+	var resp *http.Response
+	var err error
+	for _, apiURL := range apiURLs {
+		log.Printf("[升级] 尝试获取版本信息: %s", apiURL)
+		resp, err = apiClient.Get(apiURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		log.Printf("[升级] %s 失败，尝试下一个...", apiURL)
+	}
+	if err != nil || resp == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法连接 GitHub API: "+err.Error()))
 		return
 	}
 	defer resp.Body.Close()
