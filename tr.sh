@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.2.1"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -73,7 +73,7 @@ select_mirror() {
         else
             echo "  [$i] $name"
         fi
-        ((i++))
+        i=$((i+1))
     done
     echo ""
     read -p "请选择镜像 [0-$((${#MIRRORS[@]}-1))]（回车保持当前）: " idx

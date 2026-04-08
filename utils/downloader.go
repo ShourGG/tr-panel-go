@@ -1,4 +1,5 @@
 package utils
+
 import (
 	"bytes"
 	"fmt"
@@ -6,9 +7,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 	"terraria-panel/config"
+	"time"
 )
+
 type DownloadOptions struct {
 	URL             string
 	FilePath        string
@@ -18,6 +20,7 @@ type DownloadOptions struct {
 	UseGitHubMirror bool
 	MirrorURL       string
 }
+
 func DownloadWithRetry(opts DownloadOptions) error {
 	var lastErr error
 	urls := getDownloadURLs(opts.URL, opts.UseGitHubMirror, opts.MirrorURL)
@@ -43,11 +46,11 @@ func getDownloadURLs(originalURL string, useGitHubMirror bool, mirrorURL string)
 	urls := []string{}
 	if useGitHubMirror && isGitHubURL(originalURL) {
 		mirrors := []string{
-			"https://ghproxy.com/",
-			"https://gh-proxy.com/",
-			"https://mirror.ghproxy.com/",
+			"https://ghfast.top/",
+			"https://cors.isteed.cc/",
+			"https://gh.noki.icu/",
 		}
-		if mirrorURL != "" && mirrorURL != "https://ghproxy.com/" {
+		if mirrorURL != "" && mirrorURL != "https://ghfast.top/" {
 			mirrors = append([]string{mirrorURL}, mirrors...)
 		}
 		for _, mirror := range mirrors {
@@ -59,8 +62,8 @@ func getDownloadURLs(originalURL string, useGitHubMirror bool, mirrorURL string)
 	return urls
 }
 func isGitHubURL(url string) bool {
-	return strings.Contains(url, "github.com") || 
-	       strings.Contains(url, "githubusercontent.com")
+	return strings.Contains(url, "github.com") ||
+		strings.Contains(url, "githubusercontent.com")
 }
 func downloadFile(url string, filepath string, onProgress func(int), timeout time.Duration) error {
 	client := &http.Client{
@@ -112,8 +115,8 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 					}
 					elapsed := time.Since(startTime).Seconds()
 					speed := float64(downloaded) / elapsed / 1024 / 1024
-					fmt.Printf("📊 Progress: %d%% (%.2f/%.2f MB) Speed: %.2f MB/s\n", 
-						percent, 
+					fmt.Printf("📊 Progress: %d%% (%.2f/%.2f MB) Speed: %.2f MB/s\n",
+						percent,
 						float64(downloaded)/1024/1024,
 						float64(totalSize)/1024/1024,
 						speed)

@@ -1,9 +1,12 @@
 package config
+
 import (
 	"os"
 	"strconv"
+
 	"github.com/joho/godotenv"
 )
+
 type Config struct {
 	Port              string
 	Env               string
@@ -13,6 +16,7 @@ type Config struct {
 	DownloadTimeout   int
 	EnableMultiThread bool
 }
+
 func Load() *Config {
 	_ = godotenv.Load()
 	useGitHubMirror := getEnv("USE_GITHUB_MIRROR", "true") == "true"
@@ -33,7 +37,7 @@ func Load() *Config {
 		Port:              getEnv("PORT", "8800"),
 		Env:               getEnv("ENV", "development"),
 		UseGitHubMirror:   useGitHubMirror,
-		GitHubMirrorURL:   getEnv("GITHUB_MIRROR_URL", "https://ghproxy.com/"),
+		GitHubMirrorURL:   getEnv("GITHUB_MIRROR_URL", "https://ghfast.top/"),
 		DownloadRetries:   retries,
 		DownloadTimeout:   timeout,
 		EnableMultiThread: enableMultiThread,
