@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,32 +45,132 @@ type workshopCacheEntry struct {
 	cachedAt time.Time
 }
 
+type workshopDiskCacheEntry struct {
+	CachedAt time.Time       `json:"cachedAt"`
+	Data     json.RawMessage `json:"data"`
+}
+
 var (
 	workshopCache    = make(map[string]*workshopCacheEntry)
 	workshopCacheMu  sync.RWMutex
-	workshopCacheTTL = 5 * time.Minute
+	workshopCacheTTL = 30 * time.Minute
 )
+
+func workshopCacheDir() string {
+	return filepath.Join(config.DataDir, "cache", "workshop")
+}
+
+func workshopCacheFilePath(key string) string {
+	hash := sha1.Sum([]byte(key))
+	return filepath.Join(workshopCacheDir(), hex.EncodeToString(hash[:])+".json")
+}
 
 func getWorkshopCache(key string) ([]byte, bool) {
 	workshopCacheMu.RLock()
-	defer workshopCacheMu.RUnlock()
 	entry, ok := workshopCache[key]
-	if !ok || time.Since(entry.cachedAt) > workshopCacheTTL {
+	workshopCacheMu.RUnlock()
+	if ok && time.Since(entry.cachedAt) <= workshopCacheTTL {
+		return append([]byte(nil), entry.data...), true
+	}
+
+	cached, ok := getWorkshopDiskCache(key)
+	if !ok {
 		return nil, false
 	}
-	return entry.data, true
+
+	workshopCacheMu.Lock()
+	workshopCache[key] = &workshopCacheEntry{data: append([]byte(nil), cached...), cachedAt: time.Now()}
+	workshopCacheMu.Unlock()
+	return cached, true
 }
 
 func setWorkshopCache(key string, data []byte) {
+	cachedCopy := append([]byte(nil), data...)
+
 	workshopCacheMu.Lock()
-	defer workshopCacheMu.Unlock()
-	workshopCache[key] = &workshopCacheEntry{data: data, cachedAt: time.Now()}
-	// 清理过期条目（超过50条时）
+	workshopCache[key] = &workshopCacheEntry{data: cachedCopy, cachedAt: time.Now()}
 	if len(workshopCache) > 50 {
 		for k, v := range workshopCache {
 			if time.Since(v.cachedAt) > workshopCacheTTL {
 				delete(workshopCache, k)
 			}
+		}
+	}
+	workshopCacheMu.Unlock()
+
+	setWorkshopDiskCache(key, cachedCopy)
+}
+
+func getWorkshopDiskCache(key string) ([]byte, bool) {
+	cachePath := workshopCacheFilePath(key)
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+
+	var entry workshopDiskCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		_ = os.Remove(cachePath)
+		return nil, false
+	}
+	if entry.CachedAt.IsZero() || time.Since(entry.CachedAt) > workshopCacheTTL || len(entry.Data) == 0 {
+		if !entry.CachedAt.IsZero() && time.Since(entry.CachedAt) > workshopCacheTTL {
+			_ = os.Remove(cachePath)
+		}
+		return nil, false
+	}
+
+	return append([]byte(nil), entry.Data...), true
+}
+
+func setWorkshopDiskCache(key string, data []byte) {
+	cacheDir := workshopCacheDir()
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		log.Printf("⚠️ 创建创意工坊缓存目录失败: %v", err)
+		return
+	}
+
+	payload, err := json.Marshal(workshopDiskCacheEntry{
+		CachedAt: time.Now(),
+		Data:     json.RawMessage(data),
+	})
+	if err != nil {
+		log.Printf("⚠️ 序列化创意工坊缓存失败: %v", err)
+		return
+	}
+
+	cachePath := workshopCacheFilePath(key)
+	tempPath := cachePath + ".tmp"
+	if err := os.WriteFile(tempPath, payload, 0644); err != nil {
+		log.Printf("⚠️ 写入创意工坊缓存失败: %v", err)
+		return
+	}
+	if err := os.Rename(tempPath, cachePath); err != nil {
+		_ = os.Remove(tempPath)
+		log.Printf("⚠️ 保存创意工坊缓存失败: %v", err)
+		return
+	}
+
+	cleanupWorkshopDiskCache(cacheDir)
+}
+
+func cleanupWorkshopDiskCache(cacheDir string) {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil || len(entries) <= 80 {
+		return
+	}
+
+	cutoff := time.Now().Add(-workshopCacheTTL)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(cacheDir, entry.Name()))
 		}
 	}
 }
@@ -426,6 +528,7 @@ func SearchWorkshopMods(c *gin.Context) {
 	cacheKey := fmt.Sprintf("%s|%s|%s|%s", queryType, query, page, pageSize)
 	if cached, ok := getWorkshopCache(cacheKey); ok {
 		log.Printf("✅ Steam API 缓存命中: sortBy=%s, query=%s, page=%s", sortBy, query, page)
+		c.Header("X-Workshop-Cache", "hit")
 		c.Data(http.StatusOK, "application/json", cached)
 		return
 	}
@@ -559,6 +662,7 @@ func SearchWorkshopMods(c *gin.Context) {
 		"total": actualTotal,
 		"items": items,
 	})
+	c.Header("X-Workshop-Cache", "miss")
 	// 缓存响应
 	if jsonBytes, err := json.Marshal(responseData); err == nil {
 		setWorkshopCache(cacheKey, jsonBytes)
