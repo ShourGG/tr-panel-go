@@ -122,15 +122,26 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 						speed)
 				}
 			} else {
-				if downloaded%(1024*1024) == 0 {
+				virtualPercent := int(downloaded / (1024 * 1024))
+				if downloaded > 0 && virtualPercent < 1 {
+					virtualPercent = 1
+				}
+				if virtualPercent > 99 {
+					virtualPercent = 99
+				}
+
+				if virtualPercent != lastPercent || time.Since(lastReportTime) > time.Second {
+					lastPercent = virtualPercent
+					lastReportTime = time.Now()
 					if onProgress != nil {
-						virtualPercent := int(downloaded / (1024 * 1024))
-						if virtualPercent > 99 {
-							virtualPercent = 99
-						}
 						onProgress(virtualPercent)
 					}
-					fmt.Printf("📥 Downloaded: %.2f MB\n", float64(downloaded)/1024/1024)
+					elapsed := time.Since(startTime).Seconds()
+					speed := float64(downloaded) / elapsed / 1024 / 1024
+					fmt.Printf("📥 Downloaded: %.2f MB (virtual progress: %d%%) Speed: %.2f MB/s\n",
+						float64(downloaded)/1024/1024,
+						virtualPercent,
+						speed)
 				}
 			}
 		}
@@ -141,7 +152,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 			return fmt.Errorf("read failed: %v", err)
 		}
 	}
-	if onProgress != nil && totalSize > 0 {
+	if onProgress != nil {
 		onProgress(100)
 	}
 	elapsed := time.Since(startTime).Seconds()

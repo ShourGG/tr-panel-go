@@ -22,13 +22,13 @@ func Load() *Config {
 	useGitHubMirror := getEnv("USE_GITHUB_MIRROR", "true") == "true"
 	enableMultiThread := getEnv("ENABLE_MULTI_THREAD", "false") == "true"
 	retries := 3
-	if retriesStr := getEnv("DOWNLOAD_RETRIES", "3"); retriesStr != "" {
+	if retriesStr := getEnv("DOWNLOAD_RETRIES", "5"); retriesStr != "" {
 		if val, err := strconv.Atoi(retriesStr); err == nil {
 			retries = val
 		}
 	}
 	timeout := 300
-	if timeoutStr := getEnv("DOWNLOAD_TIMEOUT", "300"); timeoutStr != "" {
+	if timeoutStr := getEnv("DOWNLOAD_TIMEOUT", "600"); timeoutStr != "" {
 		if val, err := strconv.Atoi(timeoutStr); err == nil {
 			timeout = val
 		}
@@ -37,7 +37,7 @@ func Load() *Config {
 		Port:              getEnv("PORT", "8800"),
 		Env:               getEnv("ENV", "development"),
 		UseGitHubMirror:   useGitHubMirror,
-		GitHubMirrorURL:   getEnv("GITHUB_MIRROR_URL", "https://ghfast.top/"),
+		GitHubMirrorURL:   getEnv("GITHUB_MIRROR_URL", "http://xs.shour.ccwu.cc:5678/"),
 		DownloadRetries:   retries,
 		DownloadTimeout:   timeout,
 		EnableMultiThread: enableMultiThread,

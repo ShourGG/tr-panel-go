@@ -201,6 +201,74 @@ func getActiveGameTasksSnapshot() map[string]ActiveGameTask {
 	return snapshot
 }
 
+func normalizeActiveGameTaskType(gameType string) string {
+	if gameType == "tshock" {
+		return "tshock5"
+	}
+	return gameType
+}
+
+func mapActiveGameTaskStatus(action string) string {
+	switch action {
+	case "update":
+		return "updating"
+	case "repair":
+		return "repairing"
+	default:
+		return "installing"
+	}
+}
+
+func selectActiveGameTask(snapshot map[string]ActiveGameTask, requestedGameType string) (ActiveGameTask, bool) {
+	if requestedGameType != "" {
+		task, ok := snapshot[requestedGameType]
+		return task, ok
+	}
+
+	for _, gameType := range []string{"vanilla", "tmodloader", "tshock5", "tshock6"} {
+		if task, ok := snapshot[gameType]; ok {
+			return task, true
+		}
+	}
+
+	for _, task := range snapshot {
+		return task, true
+	}
+
+	return ActiveGameTask{}, false
+}
+
+func buildInstallProgressPayload(snapshot map[string]ActiveGameTask, requestedGameType string) gin.H {
+	task, ok := selectActiveGameTask(snapshot, requestedGameType)
+	if !ok {
+		return gin.H{
+			"active":      false,
+			"gameType":    requestedGameType,
+			"action":      "",
+			"status":      "idle",
+			"progress":    0,
+			"message":     "当前没有进行中的游戏安装任务",
+			"startedAt":   "",
+			"updatedAt":   "",
+			"activeCount": len(snapshot),
+			"activeTasks": snapshot,
+		}
+	}
+
+	return gin.H{
+		"active":      true,
+		"gameType":    task.GameType,
+		"action":      task.Action,
+		"status":      mapActiveGameTaskStatus(task.Action),
+		"progress":    task.Progress,
+		"message":     task.Message,
+		"startedAt":   task.StartedAt,
+		"updatedAt":   task.UpdatedAt,
+		"activeCount": len(snapshot),
+		"activeTasks": snapshot,
+	}
+}
+
 func getBlockingGameTaskMessage(requestedGameType string) string {
 	activeGameTasks.RLock()
 	defer activeGameTasks.RUnlock()
@@ -584,13 +652,12 @@ func UpdateGame(c *gin.Context) {
 	})
 }
 func GetInstallProgress(c *gin.Context) {
+	requestedGameType := normalizeActiveGameTaskType(strings.TrimSpace(c.Query("gameType")))
+	activeTasks := getActiveGameTasksSnapshot()
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"status":   "installing",
-			"progress": 50,
-			"message":  "正在下载...",
-		},
+		"data":    buildInstallProgressPayload(activeTasks, requestedGameType),
 	})
 }
 func checkVanillaInstalled() bool {
