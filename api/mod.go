@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -430,6 +431,187 @@ type SteamWorkshopItem struct {
 	Tags            []string `json:"tags"`
 }
 
+type workshopSearchCandidate struct {
+	item          gin.H
+	score         int
+	subscriptions int
+	views         int
+	votesUp       int
+	timeUpdated   int64
+}
+
+type steamWorkshopVoteData struct {
+	Score     float64 `json:"score"`
+	VotesUp   int     `json:"votes_up"`
+	VotesDown int     `json:"votes_down"`
+}
+
+type steamWorkshopTag struct {
+	Tag string `json:"tag"`
+}
+
+type steamWorkshopQueryFile struct {
+	PublishedFileID string                `json:"publishedfileid"`
+	Title           string                `json:"title"`
+	Description     string                `json:"short_description"`
+	FileSize        string                `json:"file_size"`
+	PreviewURL      string                `json:"preview_url"`
+	Subscriptions   int                   `json:"subscriptions"`
+	Favorited       int                   `json:"favorited"`
+	Views           int                   `json:"views"`
+	VoteData        steamWorkshopVoteData `json:"vote_data"`
+	Tags            []steamWorkshopTag    `json:"tags"`
+	TimeCreated     int64                 `json:"time_created"`
+	TimeUpdated     int64                 `json:"time_updated"`
+}
+
+type steamWorkshopQueryResponse struct {
+	Response struct {
+		Total          int                     `json:"total"`
+		PublishedFiles []steamWorkshopQueryFile `json:"publishedfiledetails"`
+	} `json:"response"`
+}
+
+func parsePositiveIntOrDefault(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func normalizeWorkshopSearchText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	replacer := strings.NewReplacer(
+		"_", " ",
+		"-", " ",
+		".", " ",
+		":", " ",
+		"/", " ",
+		"\\", " ",
+		"(", " ",
+		")", " ",
+		"[", " ",
+		"]", " ",
+		"{", " ",
+		"}", " ",
+		",", " ",
+		"!", " ",
+		"?", " ",
+		"'", " ",
+		"\"", " ",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(text)), " ")
+}
+
+func scoreWorkshopSearchCandidate(title, description string, tags []string, query string) int {
+	normalizedQuery := normalizeWorkshopSearchText(query)
+	if normalizedQuery == "" {
+		return 0
+	}
+
+	titleText := normalizeWorkshopSearchText(title)
+	descriptionText := normalizeWorkshopSearchText(description)
+	tagTexts := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tagTexts = append(tagTexts, normalizeWorkshopSearchText(tag))
+	}
+
+	score := 0
+	switch {
+	case titleText == normalizedQuery:
+		score += 1200
+	case strings.HasPrefix(titleText, normalizedQuery):
+		score += 800
+	case strings.Contains(titleText, normalizedQuery):
+		score += 600
+	}
+
+	if strings.HasPrefix(descriptionText, normalizedQuery) {
+		score += 80
+	} else if strings.Contains(descriptionText, normalizedQuery) {
+		score += 40
+	}
+
+	for _, tagText := range tagTexts {
+		if tagText == normalizedQuery {
+			score += 120
+			break
+		}
+		if strings.Contains(tagText, normalizedQuery) {
+			score += 60
+			break
+		}
+	}
+
+	tokens := strings.Fields(normalizedQuery)
+	if len(tokens) == 0 {
+		return score
+	}
+
+	allTokensInTitle := true
+	allTokensInText := true
+	for _, token := range tokens {
+		inTitle := strings.Contains(titleText, token)
+		inDescription := strings.Contains(descriptionText, token)
+		inTags := false
+		for _, tagText := range tagTexts {
+			if strings.Contains(tagText, token) {
+				inTags = true
+				break
+			}
+		}
+
+		if inTitle {
+			score += 160
+		} else {
+			allTokensInTitle = false
+		}
+		if inDescription {
+			score += 35
+		}
+		if inTags {
+			score += 45
+		}
+		if !inTitle && !inDescription && !inTags {
+			allTokensInText = false
+		}
+	}
+
+	if len(tokens) > 1 {
+		if allTokensInTitle {
+			score += 280
+		} else if allTokensInText {
+			score += 120
+		}
+	}
+
+	return score
+}
+
+func fetchSteamWorkshopQueryPage(queryType string, apiPage, apiPageSize int, query string) (steamWorkshopQueryResponse, error) {
+	apiURL := fmt.Sprintf(
+		"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%d&numperpage=%d&appid=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
+		STEAM_API_KEY, queryType, apiPage, apiPageSize, TMODLOADER_APPID,
+	)
+	if query != "" {
+		apiURL += "&search_text=" + url.QueryEscape(query)
+	}
+
+	steamClient := &http.Client{Timeout: 15 * time.Second}
+	resp, err := steamClient.Get(apiURL)
+	if err != nil {
+		return steamWorkshopQueryResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var result steamWorkshopQueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return steamWorkshopQueryResponse{}, err
+	}
+	return result, nil
+}
+
 func GetMods(c *gin.Context) {
 	modDir := filepath.Join(config.DataDir, "tModLoader", "Mods")
 	enabledFile := filepath.Join(modDir, "enabled.json")
@@ -501,6 +683,8 @@ func SearchWorkshopMods(c *gin.Context) {
 	}
 	page := c.DefaultQuery("page", "1")
 	pageSize := c.DefaultQuery("pageSize", "20")
+	pageInt := parsePositiveIntOrDefault(page, 1)
+	pageSizeInt := parsePositiveIntOrDefault(pageSize, 20)
 	sortBy := c.DefaultQuery("sortBy", "trend_days")
 	var queryType string
 	if query != "" {
@@ -518,13 +702,6 @@ func SearchWorkshopMods(c *gin.Context) {
 			queryType = "3"
 		}
 	}
-	apiURL := fmt.Sprintf(
-		"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%s&numperpage=%s&appid=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
-		STEAM_API_KEY, queryType, page, pageSize, TMODLOADER_APPID,
-	)
-	if query != "" {
-		apiURL += "&search_text=" + url.QueryEscape(query)
-	}
 	cacheKey := fmt.Sprintf("%s|%s|%s|%s", queryType, query, page, pageSize)
 	if cached, ok := getWorkshopCache(cacheKey); ok {
 		log.Printf("✅ Steam API 缓存命中: sortBy=%s, query=%s, page=%s", sortBy, query, page)
@@ -534,43 +711,47 @@ func SearchWorkshopMods(c *gin.Context) {
 	}
 
 	log.Printf("🔍 Steam API请求: sortBy=%s, query=%s, page=%s, pageSize=%s", sortBy, query, page, pageSize)
-	steamClient := &http.Client{Timeout: 15 * time.Second}
-	resp, err := steamClient.Get(apiURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
-		return
+	result := steamWorkshopQueryResponse{}
+	if query != "" {
+		searchWindowSize := pageSizeInt * (pageInt + 4)
+		if searchWindowSize < 50 {
+			searchWindowSize = 50
+		}
+		if searchWindowSize > 500 {
+			searchWindowSize = 500
+		}
+
+		apiPageSize := 100
+		pagesNeeded := (searchWindowSize + apiPageSize - 1) / apiPageSize
+		if pagesNeeded < 1 {
+			pagesNeeded = 1
+		}
+
+		result.Response.PublishedFiles = make([]steamWorkshopQueryFile, 0, pagesNeeded*apiPageSize)
+		for apiPage := 1; apiPage <= pagesNeeded; apiPage++ {
+			pageResult, err := fetchSteamWorkshopQueryPage(queryType, apiPage, apiPageSize, query)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
+				return
+			}
+			if apiPage == 1 {
+				result.Response.Total = pageResult.Response.Total
+			}
+			result.Response.PublishedFiles = append(result.Response.PublishedFiles, pageResult.Response.PublishedFiles...)
+			if len(result.Response.PublishedFiles) >= searchWindowSize || len(pageResult.Response.PublishedFiles) < apiPageSize {
+				break
+			}
+		}
+	} else {
+		pageResult, err := fetchSteamWorkshopQueryPage(queryType, pageInt, pageSizeInt, query)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
+			return
+		}
+		result = pageResult
 	}
-	defer resp.Body.Close()
-	var result struct {
-		Response struct {
-			Total          int `json:"total"`
-			PublishedFiles []struct {
-				PublishedFileID string `json:"publishedfileid"`
-				Title           string `json:"title"`
-				Description     string `json:"short_description"`
-				FileSize        string `json:"file_size"`
-				PreviewURL      string `json:"preview_url"`
-				Subscriptions   int    `json:"subscriptions"`
-				Favorited       int    `json:"favorited"`
-				Views           int    `json:"views"`
-				VoteData        struct {
-					Score     float64 `json:"score"`
-					VotesUp   int     `json:"votes_up"`
-					VotesDown int     `json:"votes_down"`
-				} `json:"vote_data"`
-				Tags []struct {
-					Tag string `json:"tag"`
-				} `json:"tags"`
-				TimeCreated int64 `json:"time_created"`
-				TimeUpdated int64 `json:"time_updated"`
-			} `json:"publishedfiledetails"`
-		} `json:"response"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("解析 Steam API 响应失败"))
-		return
-	}
-	items := []gin.H{}
+	items := make([]gin.H, 0, len(result.Response.PublishedFiles))
+	candidates := make([]workshopSearchCandidate, 0, len(result.Response.PublishedFiles))
 	for _, file := range result.Response.PublishedFiles {
 		tags := []string{}
 		for _, tag := range file.Tags {
@@ -639,18 +820,49 @@ func SearchWorkshopMods(c *gin.Context) {
 			item["votes_up"] = 0
 			item["votes_down"] = 0
 		}
-		items = append(items, item)
+		if query != "" {
+			candidates = append(candidates, workshopSearchCandidate{
+				item:          item,
+				score:         scoreWorkshopSearchCandidate(file.Title, file.Description, tags, query),
+				subscriptions: file.Subscriptions,
+				views:         file.Views,
+				votesUp:       file.VoteData.VotesUp,
+				timeUpdated:   file.TimeUpdated,
+			})
+		} else {
+			items = append(items, item)
+		}
+	}
+	if query != "" {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].score != candidates[j].score {
+				return candidates[i].score > candidates[j].score
+			}
+			if candidates[i].subscriptions != candidates[j].subscriptions {
+				return candidates[i].subscriptions > candidates[j].subscriptions
+			}
+			if candidates[i].votesUp != candidates[j].votesUp {
+				return candidates[i].votesUp > candidates[j].votesUp
+			}
+			if candidates[i].views != candidates[j].views {
+				return candidates[i].views > candidates[j].views
+			}
+			return candidates[i].timeUpdated > candidates[j].timeUpdated
+		})
+
+		start := (pageInt - 1) * pageSizeInt
+		if start < len(candidates) {
+			end := start + pageSizeInt
+			if end > len(candidates) {
+				end = len(candidates)
+			}
+			for _, candidate := range candidates[start:end] {
+				items = append(items, candidate.item)
+			}
+		}
 	}
 	actualTotal := result.Response.Total
 	if len(items) == 0 && actualTotal > 0 {
-		pageSizeInt := 20
-		if ps, err := c.GetQuery("pageSize"); err && ps != "" {
-			fmt.Sscanf(ps, "%d", &pageSizeInt)
-		}
-		pageInt := 1
-		if p, err := c.GetQuery("page"); err && p != "" {
-			fmt.Sscanf(p, "%d", &pageInt)
-		}
 		actualTotal = (pageInt - 1) * pageSizeInt
 		log.Printf("⚠️ 第%d页无数据，限制总数为: %d", pageInt, actualTotal)
 	}
