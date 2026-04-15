@@ -11,6 +11,7 @@ import (
 	"strings"
 	"terraria-panel/config"
 	"terraria-panel/models"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -307,9 +308,12 @@ func ListFiles(c *gin.Context) {
 		}
 
 		files = append(files, gin.H{
-			"name":  entry.Name(),
-			"isDir": entry.IsDir(),
-			"size":  info.Size(),
+			"name":        entry.Name(),
+			"isDir":       entry.IsDir(),
+			"isDirectory": entry.IsDir(),
+			"size":        info.Size(),
+			"modifiedAt":  info.ModTime().Format(time.RFC3339),
+			"path":        filepath.ToSlash(filepath.Join(strings.TrimPrefix(relativePath, "./"), entry.Name())),
 		})
 	}
 

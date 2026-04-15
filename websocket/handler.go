@@ -202,6 +202,7 @@ type LogClient struct {
 	send   chan []byte
 	tail   *tail.Tail
 	mu     sync.Mutex
+	done   chan struct{}
 }
 
 var (
@@ -225,6 +226,7 @@ func HandleRoomLogs(c *gin.Context) {
 		conn:   conn,
 		roomID: roomID,
 		send:   make(chan []byte, 256),
+		done:   make(chan struct{}),
 	}
 	logClientsMu.Lock()
 	logClients[client] = true
@@ -255,11 +257,56 @@ func HandleRoomLogs(c *gin.Context) {
 	go client.tailLogs()
 	client.readPump()
 }
+
+func queueLogClientMessage(c *LogClient, payload map[string]interface{}) {
+	data, _ := json.Marshal(payload)
+	select {
+	case <-c.done:
+		return
+	case c.send <- data:
+	default:
+		log.Println("[WebSocket] Send buffer full, dropping log payload")
+	}
+}
+
+func waitForLogFile(c *LogClient, logFile string) bool {
+	queueLogClientMessage(c, map[string]interface{}{
+		"type":    "info",
+		"message": "⏳ 等待服务器启动并生成日志文件...",
+		"time":    time.Now().Format("15:04:05"),
+	})
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		if _, err := os.Stat(logFile); err == nil {
+			queueLogClientMessage(c, map[string]interface{}{
+				"type":    "info",
+				"message": "✅ 已检测到日志文件，开始读取日志...",
+				"time":    time.Now().Format("15:04:05"),
+			})
+			return true
+		}
+
+		select {
+		case <-c.done:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 func (c *LogClient) readPump() {
 	defer func() {
 		logClientsMu.Lock()
 		delete(logClients, c)
 		logClientsMu.Unlock()
+		select {
+		case <-c.done:
+		default:
+			close(c.done)
+		}
 		if c.tail != nil {
 			c.tail.Stop()
 		}
@@ -301,6 +348,8 @@ func (c *LogClient) writePump() {
 	}()
 	for {
 		select {
+		case <-c.done:
+			return
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
@@ -321,27 +370,7 @@ func (c *LogClient) writePump() {
 func (c *LogClient) tailLogs() {
 	logFile := websocketLogFile(c.roomID)
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		infoMsg := map[string]interface{}{
-			"type":    "info",
-			"message": "⏳ 等待服务器启动并生成日志文件...",
-			"time":    time.Now().Format("15:04:05"),
-		}
-		data, _ := json.Marshal(infoMsg)
-		c.send <- data
-		for i := 0; i < 30; i++ {
-			time.Sleep(1 * time.Second)
-			if _, err := os.Stat(logFile); err == nil {
-				break
-			}
-		}
-		if _, err := os.Stat(logFile); os.IsNotExist(err) {
-			errorMsg := map[string]interface{}{
-				"type":    "error",
-				"message": "❌ 日志文件不存在，请先启动服务器",
-				"time":    time.Now().Format("15:04:05"),
-			}
-			data, _ := json.Marshal(errorMsg)
-			c.send <- data
+		if !waitForLogFile(c, logFile) {
 			return
 		}
 	}
@@ -357,26 +386,27 @@ func (c *LogClient) tailLogs() {
 	})
 	if err != nil {
 		log.Printf("[WebSocket] Failed to tail log file: %v", err)
-		errorMsg := map[string]interface{}{
+		queueLogClientMessage(c, map[string]interface{}{
 			"type":    "error",
 			"message": fmt.Sprintf("❌ 无法读取日志文件: %v", err),
 			"time":    time.Now().Format("15:04:05"),
-		}
-		data, _ := json.Marshal(errorMsg)
-		c.send <- data
+		})
 		return
 	}
 	c.mu.Lock()
 	c.tail = t
 	c.mu.Unlock()
-	startMsg := map[string]interface{}{
+	queueLogClientMessage(c, map[string]interface{}{
 		"type":    "info",
 		"message": "✅ 开始实时推送日志...",
 		"time":    time.Now().Format("15:04:05"),
-	}
-	data, _ := json.Marshal(startMsg)
-	c.send <- data
+	})
 	for line := range t.Lines {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
 		if line.Err != nil {
 			log.Printf("[WebSocket] Error reading log line: %v", line.Err)
 			continue
@@ -389,6 +419,8 @@ func (c *LogClient) tailLogs() {
 		}
 		data, _ := json.Marshal(logMsg)
 		select {
+		case <-c.done:
+			return
 		case c.send <- data:
 		default:
 			log.Println("[WebSocket] Send buffer full, dropping log line")
@@ -409,13 +441,11 @@ func (c *LogClient) sendHistoryLogs(logFile string) {
 			lines = lines[1:]
 		}
 	}
-	historyMsg := map[string]interface{}{
+	queueLogClientMessage(c, map[string]interface{}{
 		"type":    "info",
 		"message": fmt.Sprintf("📜 加载最近 %d 条历史日志", len(lines)),
 		"time":    time.Now().Format("15:04:05"),
-	}
-	data, _ := json.Marshal(historyMsg)
-	c.send <- data
+	})
 	for _, line := range lines {
 		logMsg := map[string]interface{}{
 			"type":         "log",
@@ -423,8 +453,7 @@ func (c *LogClient) sendHistoryLogs(logFile string) {
 			"lineComplete": true,
 			"time":         time.Now().Format("15:04:05"),
 		}
-		data, _ := json.Marshal(logMsg)
-		c.send <- data
+		queueLogClientMessage(c, logMsg)
 		time.Sleep(1 * time.Millisecond)
 	}
 }
@@ -436,6 +465,12 @@ func HandleServerLogs(c *gin.Context) {
 	}
 	send := make(chan []byte, 512)
 	done := make(chan struct{})
+	type roomLogFile struct {
+		id   int
+		path string
+	}
+	tails := make(map[string]*tail.Tail)
+	var tailsMu sync.Mutex
 
 	welcomeMsg := map[string]interface{}{
 		"type":    "connected",
@@ -445,73 +480,54 @@ func HandleServerLogs(c *gin.Context) {
 	data, _ := json.Marshal(welcomeMsg)
 	conn.WriteMessage(websocket.TextMessage, data)
 
-	// Find all room log files
-	logDir := config.LogsDir
-	entries, _ := os.ReadDir(logDir)
-	var roomFiles []struct {
-		id   int
-		path string
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		var rid int
-		if _, err := fmt.Sscanf(name, "room-%d.log", &rid); err == nil && rid > 0 {
-			roomFiles = append(roomFiles, struct {
-				id   int
-				path string
-			}{rid, config.RoomLogFile(rid)})
+	queueServerMessage := func(payload map[string]interface{}) {
+		d, _ := json.Marshal(payload)
+		select {
+		case <-done:
+			return
+		case send <- d:
+		default:
+			log.Println("[WebSocket] Send buffer full for server logs")
 		}
 	}
 
-	if len(roomFiles) == 0 {
-		infoMsg := map[string]interface{}{
-			"type":    "info",
-			"message": "⏳ 暂无房间日志文件，请先启动至少一个房间",
-			"time":    time.Now().Format("15:04:05"),
+	sendRoomHistoryLogs := func(roomID int, logFile string) {
+		file, err := os.Open(logFile)
+		if err != nil {
+			return
 		}
-		data, _ := json.Marshal(infoMsg)
-		conn.WriteMessage(websocket.TextMessage, data)
+		defer file.Close()
+
+		lines := []string{}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+			if len(lines) > 50 {
+				lines = lines[1:]
+			}
+		}
+		for _, line := range lines {
+			queueServerMessage(map[string]interface{}{
+				"type":     "log",
+				"message":  line,
+				"roomName": fmt.Sprintf("Room %d", roomID),
+				"time":     time.Now().Format("15:04:05"),
+			})
+		}
 	}
 
-	var tails []*tail.Tail
-
-	// Tail each room log file
-	for _, rf := range roomFiles {
-		roomID := rf.id
-		logFile := rf.path
+	attachRoomTail := func(roomID int, logFile string) {
+		tailsMu.Lock()
+		if _, exists := tails[logFile]; exists {
+			tailsMu.Unlock()
+			return
+		}
+		tailsMu.Unlock()
 		if _, err := os.Stat(logFile); os.IsNotExist(err) {
-			continue
+			return
 		}
 
-		// Send last 50 lines of history per room
-		func() {
-			file, err := os.Open(logFile)
-			if err != nil {
-				return
-			}
-			defer file.Close()
-			lines := []string{}
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				lines = append(lines, scanner.Text())
-				if len(lines) > 50 {
-					lines = lines[1:]
-				}
-			}
-			for _, line := range lines {
-				logMsg := map[string]interface{}{
-					"type":     "log",
-					"message":  line,
-					"roomName": fmt.Sprintf("Room %d", roomID),
-					"time":     time.Now().Format("15:04:05"),
-				}
-				d, _ := json.Marshal(logMsg)
-				conn.WriteMessage(websocket.TextMessage, d)
-			}
-		}()
+		sendRoomHistoryLogs(roomID, logFile)
 
 		t, err := tail.TailFile(logFile, tail.Config{
 			Follow:   true,
@@ -521,11 +537,18 @@ func HandleServerLogs(c *gin.Context) {
 		})
 		if err != nil {
 			log.Printf("[WebSocket] Failed to tail %s: %v", logFile, err)
-			continue
+			return
 		}
-		tails = append(tails, t)
+		tailsMu.Lock()
+		tails[logFile] = t
+		tailsMu.Unlock()
 
-		go func(t *tail.Tail, rid int) {
+		go func(t *tail.Tail, rid int, path string) {
+			defer func() {
+				tailsMu.Lock()
+				delete(tails, path)
+				tailsMu.Unlock()
+			}()
 			for {
 				select {
 				case <-done:
@@ -537,29 +560,79 @@ func HandleServerLogs(c *gin.Context) {
 					if line.Err != nil {
 						continue
 					}
-					logMsg := map[string]interface{}{
+					queueServerMessage(map[string]interface{}{
 						"type":     "log",
 						"message":  line.Text,
 						"roomName": fmt.Sprintf("Room %d", rid),
 						"time":     time.Now().Format("15:04:05"),
-					}
-					d, _ := json.Marshal(logMsg)
-					select {
-					case send <- d:
-					default:
-					}
+					})
 				}
 			}
-		}(t, roomID)
+		}(t, roomID, logFile)
 	}
 
-	startMsg := map[string]interface{}{
-		"type":    "info",
-		"message": fmt.Sprintf("✅ 正在监听 %d 个房间的日志...", len(roomFiles)),
-		"time":    time.Now().Format("15:04:05"),
+	collectRoomFiles := func() []roomLogFile {
+		logDir := config.LogsDir
+		entries, err := os.ReadDir(logDir)
+		if err != nil {
+			return nil
+		}
+		files := make([]roomLogFile, 0, len(entries))
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			var rid int
+			if _, err := fmt.Sscanf(name, "room-%d.log", &rid); err == nil && rid > 0 {
+				files = append(files, roomLogFile{id: rid, path: config.RoomLogFile(rid)})
+			}
+		}
+		return files
 	}
-	data, _ = json.Marshal(startMsg)
-	conn.WriteMessage(websocket.TextMessage, data)
+
+	waitingAnnounced := false
+	scanRoomFiles := func() {
+		roomFiles := collectRoomFiles()
+		if len(roomFiles) == 0 {
+			if !waitingAnnounced {
+				waitingAnnounced = true
+				queueServerMessage(map[string]interface{}{
+					"type":    "info",
+					"message": "⏳ 暂无房间日志文件，请先启动至少一个房间",
+					"time":    time.Now().Format("15:04:05"),
+				})
+			}
+			return
+		}
+
+		if waitingAnnounced {
+			waitingAnnounced = false
+			queueServerMessage(map[string]interface{}{
+				"type":    "info",
+				"message": fmt.Sprintf("✅ 已检测到 %d 个房间日志文件，开始实时监听", len(roomFiles)),
+				"time":    time.Now().Format("15:04:05"),
+			})
+		}
+
+		for _, roomFile := range roomFiles {
+			attachRoomTail(roomFile.id, roomFile.path)
+		}
+	}
+
+	scanRoomFiles()
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				scanRoomFiles()
+			}
+		}
+	}()
 
 	// Write pump
 	go func() {
@@ -601,9 +674,11 @@ func HandleServerLogs(c *gin.Context) {
 
 	// Cleanup
 	close(done)
+	tailsMu.Lock()
 	for _, t := range tails {
 		t.Stop()
 	}
+	tailsMu.Unlock()
 	conn.Close()
 	log.Println("[WebSocket] Server logs client disconnected")
 }
