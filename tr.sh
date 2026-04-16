@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.3.17"
+SCRIPT_VERSION="1.3.18-dev.1"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -201,6 +201,16 @@ for item in data:
     fi
 }
 
+print_missing_channel_release_error() {
+    if [ "$UPDATE_CHANNEL" = "dev" ]; then
+        echo -e "${RED}错误: 当前 dev 通道没有可用的开发预发布版本${NC}"
+        echo -e "${YELLOW}请先发布一个 prerelease，例如 v1.3.18-dev.1${NC}"
+        echo -e "${YELLOW}或者先切回 stable 通道再更新面板${NC}"
+    else
+        echo -e "${RED}错误: 无法获取 stable 通道的正式版本，请检查网络连接或切换镜像 [选项 12]${NC}"
+    fi
+}
+
 # 构建下载 URL
 get_release_download_url() {
     local version="$1"
@@ -309,13 +319,14 @@ show_menu() {
 # 下载并启动
 install_service() {
     check_root
+    load_update_channel
     echo -e "${GREEN}[1/5] 创建安装目录...${NC}"
     mkdir -p $INSTALL_DIR
     cd $INSTALL_DIR
 
-    VERSION=$(get_latest_version)
+    VERSION=$(get_latest_version || true)
     if [ -z "$VERSION" ]; then
-        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接或切换镜像 [选项 12]${NC}"
+        print_missing_channel_release_error
         exit 1
     fi
     DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
@@ -405,9 +416,11 @@ restart_service() {
 # 更新面板
 update_panel() {
     check_root
-    VERSION=$(get_latest_version)
+    load_update_channel
+    echo -e "${BLUE}当前更新通道: ${UPDATE_CHANNEL}${NC}"
+    VERSION=$(get_latest_version || true)
     if [ -z "$VERSION" ]; then
-        echo -e "${RED}错误: 无法从 GitHub 获取最新版本号，请检查网络连接或切换镜像 [选项 12]${NC}"
+        print_missing_channel_release_error
         exit 1
     fi
     DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
