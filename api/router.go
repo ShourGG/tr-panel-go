@@ -33,6 +33,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.GET("/system/memory", GetMemory)
 			protected.GET("/system/detail", GetSystemInfoDetail)
 			protected.GET("/system/panel-status", GetPanelStatus)
+			protected.GET("/system/update-info", GetUpdateInfo)
 			protected.POST("/system/upgrade", SelfUpgrade)
 			protected.GET("/game/check", CheckGameInstalled)
 			protected.GET("/game/install-info", GetGameInstallInfo)

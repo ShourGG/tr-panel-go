@@ -43,6 +43,8 @@ SCRIPT_VERSION="1.2.1"
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
 PORT=8800
+UPDATE_CHANNEL="stable"
+CHANNEL_FILE="${INSTALL_DIR}/update-channel"
 
 # ────────── GitHub 镜像支持 ──────────
 # 镜像列表：名称|API前缀|下载前缀|Raw前缀
@@ -59,6 +61,88 @@ MIRROR_IDX=0
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
 get_mirror_raw()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f4; }
+
+normalize_update_channel() {
+    local channel=$(echo "$1" | tr '[:upper:]' '[:lower:]' | xargs)
+    if [ "$channel" = "dev" ]; then
+        echo "dev"
+    else
+        echo "stable"
+    fi
+}
+
+load_update_channel() {
+    local service_file="/etc/systemd/system/${SERVICE_NAME}.service"
+    local detected=""
+
+    if [ -f "$service_file" ]; then
+        detected=$(grep '^Environment="UPDATE_CHANNEL=' "$service_file" 2>/dev/null | tail -1 | cut -d'"' -f2 | cut -d'=' -f2)
+    fi
+
+    if [ -z "$detected" ] && [ -f "$CHANNEL_FILE" ]; then
+        detected=$(cat "$CHANNEL_FILE" 2>/dev/null)
+    fi
+
+    UPDATE_CHANNEL=$(normalize_update_channel "$detected")
+}
+
+save_update_channel() {
+    mkdir -p "$INSTALL_DIR"
+    echo "$UPDATE_CHANNEL" > "$CHANNEL_FILE"
+
+    local service_file="/etc/systemd/system/${SERVICE_NAME}.service"
+    if [ -f "$service_file" ]; then
+        if grep -q '^Environment="UPDATE_CHANNEL=' "$service_file"; then
+            sed -i "s/^Environment=\"UPDATE_CHANNEL=.*/Environment=\"UPDATE_CHANNEL=${UPDATE_CHANNEL}\"/" "$service_file"
+        else
+            sed -i "/^Environment=\"JWT_SECRET=/a Environment=\"UPDATE_CHANNEL=${UPDATE_CHANNEL}\"" "$service_file"
+        fi
+
+        systemctl daemon-reload
+        if systemctl list-unit-files | grep -q "^${SERVICE_NAME}\.service"; then
+            systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+select_update_channel() {
+    check_root
+    load_update_channel
+
+    echo ""
+    echo -e "${BLUE}========== 切换更新通道 ==========${NC}"
+    if [ "$UPDATE_CHANNEL" = "dev" ]; then
+        echo -e "  ${GREEN}[1] 开发板 dev  ← 当前${NC}"
+        echo "  [0] 正式版 stable"
+    else
+        echo -e "  ${GREEN}[0] 正式版 stable  ← 当前${NC}"
+        echo "  [1] 开发板 dev"
+    fi
+    echo ""
+    read -p "请选择更新通道 [0-1]（回车保持当前）: " channel_idx
+
+    if [ -z "$channel_idx" ]; then
+        return
+    fi
+
+    case "$channel_idx" in
+        0) UPDATE_CHANNEL="stable" ;;
+        1) UPDATE_CHANNEL="dev" ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            return
+            ;;
+    esac
+
+    save_update_channel
+    echo -e "${GREEN}更新通道已切换为: ${UPDATE_CHANNEL}${NC}"
+    if [ "$UPDATE_CHANNEL" = "dev" ]; then
+        echo -e "${YELLOW}当前机器将只跟踪开发预发布版本${NC}"
+    else
+        echo -e "${YELLOW}当前机器将只跟踪正式稳定版本${NC}"
+    fi
+    echo ""
+}
 
 select_mirror() {
     echo ""
@@ -88,9 +172,28 @@ select_mirror() {
 # 从 GitHub API 获取最新版本号（失败则报错退出，不使用写死的兜底版本）
 get_latest_version() {
     local api_base=$(get_mirror_api)
-    LATEST=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
-        "${api_base}/repos/ShourGG/tr-panel-go/releases/latest" \
-        2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    load_update_channel
+
+    if [ "$UPDATE_CHANNEL" = "dev" ]; then
+        local response
+        response=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
+            "${api_base}/repos/ShourGG/tr-panel-go/releases?per_page=20" 2>/dev/null)
+        if command -v python3 >/dev/null 2>&1; then
+            LATEST=$(printf '%s' "$response" | python3 -c "import json, sys
+data = json.load(sys.stdin)
+for item in data:
+    if not item.get('draft') and item.get('prerelease'):
+        print(item.get('tag_name', ''))
+        break
+")
+        else
+            LATEST=$(echo "$response" | grep -o '"tag_name":"[^"]*".*"prerelease":true' | head -1 | cut -d'"' -f4)
+        fi
+    else
+        LATEST=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
+            "${api_base}/repos/ShourGG/tr-panel-go/releases/latest" \
+            2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    fi
     if [ -z "$LATEST" ]; then
         echo ""
         return 1
@@ -159,6 +262,7 @@ check_script_update() {
 # 显示菜单
 show_menu() {
     clear
+    load_update_channel
     
     # 检查服务状态
     if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
@@ -178,6 +282,7 @@ show_menu() {
     check_script_update
     
     echo -e "${YELLOW}系统要求: Ubuntu 24+ (低版本可能出现 GLIBC 版本报错)${NC}"
+    echo -e "${BLUE}更新通道: ${UPDATE_CHANNEL}${NC}"
     echo ""
     echo "————————————————————————————————————————"
     echo "[0]: 下载并启动服务 (Download and start)"
@@ -197,6 +302,7 @@ show_menu() {
     echo "————————————————————————————————————————"
     local mirror_name=$(echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f1)
     echo -e "[12]: 切换 GitHub 镜像 (当前: ${GREEN}${mirror_name}${NC})"
+    echo -e "[13]: 切换更新通道 (当前: ${GREEN}${UPDATE_CHANNEL}${NC})"
     echo "[11]: 退出脚本 (Exit)"
     echo "————————————————————————————————————————"
     echo ""
@@ -251,10 +357,12 @@ Restart=always
 RestartSec=10
 Environment="PORT=$PORT"
 Environment="JWT_SECRET=$JWT_SECRET"
+Environment="UPDATE_CHANNEL=$UPDATE_CHANNEL"
 
 [Install]
 WantedBy=multi-user.target
 EOF
+    echo "$UPDATE_CHANNEL" > "$CHANNEL_FILE"
 
     echo -e "${GREEN}[5/5] 启动服务...${NC}"
     systemctl daemon-reload
@@ -425,7 +533,7 @@ uninstall() {
 # 主循环
 while true; do
     show_menu
-    read -p "请输入选择 (Please enter your selection) [0-12]: " choice
+    read -p "请输入选择 (Please enter your selection) [0-13]: " choice
     
     case $choice in
         0)
@@ -476,6 +584,10 @@ while true; do
             ;;
         12)
             select_mirror
+            read -p "按回车键继续..."
+            ;;
+        13)
+            select_update_channel
             read -p "按回车键继续..."
             ;;
         *)

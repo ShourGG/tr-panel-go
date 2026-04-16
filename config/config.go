@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Port              string
 	Env               string
+	UpdateChannel     string
 	UseGitHubMirror   bool
 	GitHubMirrorURL   string
 	DownloadRetries   int
@@ -47,6 +48,7 @@ func Load() *Config {
 	return &Config{
 		Port:              getEnv("PORT", "8800"),
 		Env:               getEnv("ENV", "development"),
+		UpdateChannel:     getEnv("UPDATE_CHANNEL", "stable"),
 		UseGitHubMirror:   useGitHubMirror,
 		GitHubMirrorURL:   getEnv("GITHUB_MIRROR_URL", "http://xs.shour.ccwu.cc:5678/"),
 		DownloadRetries:   retries,

@@ -45,6 +45,26 @@ var (
 	publicIPFailureTTL    = 1 * time.Minute
 )
 
+const (
+	updateChannelStable = "stable"
+	updateChannelDev    = "dev"
+	githubRepoReleases  = "https://github.com/ShourGG/tr-panel-go/releases"
+)
+
+type githubReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+type githubRelease struct {
+	TagName    string               `json:"tag_name"`
+	Name       string               `json:"name"`
+	HTMLURL    string               `json:"html_url"`
+	Draft      bool                 `json:"draft"`
+	Prerelease bool                 `json:"prerelease"`
+	Assets     []githubReleaseAsset `json:"assets"`
+}
+
 func getInstalledTModLoaderTerrariaVersion() string {
 	version, ok := getInstalledGameVersion("tmodloader")
 	if !ok || strings.TrimSpace(version) == "" {
@@ -633,63 +653,158 @@ func getPanelVersion() string {
 	return "1.3.16"
 }
 
+func normalizeUpdateChannel(channel string) string {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case updateChannelDev:
+		return updateChannelDev
+	default:
+		return updateChannelStable
+	}
+}
+
+func getConfiguredUpdateChannel() string {
+	cfg := config.Load()
+	return normalizeUpdateChannel(cfg.UpdateChannel)
+}
+
+func buildGitHubReleaseAPIURLs(apiPath string) []string {
+	return []string{
+		apiPath,
+		"https://cors.isteed.cc/" + apiPath,
+		"https://gh.noki.icu/" + apiPath,
+	}
+}
+
+func fetchChannelRelease(channel string) (*githubRelease, error) {
+	apiPath := "https://api.github.com/repos/ShourGG/tr-panel-go/releases?per_page=20"
+	apiClient := &http.Client{Timeout: 15 * time.Second}
+
+	var releases []githubRelease
+	var lastErr error
+	for _, apiURL := range buildGitHubReleaseAPIURLs(apiPath) {
+		log.Printf("[升级] 尝试获取版本列表: %s", apiURL)
+		resp, err := apiClient.Get(apiURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		func() {
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				lastErr = fmt.Errorf("unexpected status: %d", resp.StatusCode)
+				return
+			}
+
+			var decoded []githubRelease
+			if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+				lastErr = err
+				return
+			}
+
+			releases = decoded
+			lastErr = nil
+		}()
+
+		if lastErr == nil {
+			break
+		}
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("无法连接 GitHub Releases API: %w", lastErr)
+	}
+
+	for _, release := range releases {
+		if release.Draft {
+			continue
+		}
+
+		if channel == updateChannelDev {
+			if release.Prerelease {
+				return &release, nil
+			}
+			continue
+		}
+
+		if !release.Prerelease {
+			return &release, nil
+		}
+	}
+
+	if channel == updateChannelDev {
+		return nil, fmt.Errorf("当前没有可用的开发版预发布")
+	}
+
+	return nil, fmt.Errorf("当前没有可用的正式版发布")
+}
+
+func findReleaseAssetDownloadURL(release *githubRelease, assetName string) string {
+	if release == nil {
+		return ""
+	}
+
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			return asset.BrowserDownloadURL
+		}
+	}
+
+	return ""
+}
+
+func trimReleaseVersion(tag string) string {
+	return strings.TrimPrefix(strings.TrimSpace(tag), "v")
+}
+
+func GetUpdateInfo(c *gin.Context) {
+	channel := getConfiguredUpdateChannel()
+	currentVersion := getPanelVersion()
+
+	response := gin.H{
+		"channel":        channel,
+		"currentVersion": currentVersion,
+		"latestVersion":  currentVersion,
+		"latestTag":      "",
+		"hasUpdate":      false,
+		"updateUrl":      githubRepoReleases,
+		"downloadUrl":    "",
+	}
+
+	release, err := fetchChannelRelease(channel)
+	if err != nil {
+		response["error"] = err.Error()
+		c.JSON(http.StatusOK, models.SuccessResponse(response))
+		return
+	}
+
+	latestVersion := trimReleaseVersion(release.TagName)
+	response["latestVersion"] = latestVersion
+	response["latestTag"] = release.TagName
+	response["updateUrl"] = release.HTMLURL
+	response["downloadUrl"] = findReleaseAssetDownloadURL(release, "terraria-panel")
+	response["hasUpdate"] = latestVersion != currentVersion
+	c.JSON(http.StatusOK, models.SuccessResponse(response))
+}
+
 // SelfUpgrade handles POST /system/upgrade
 func SelfUpgrade(c *gin.Context) {
 	currentVersion := getPanelVersion()
-
-	// 1. Fetch latest release info (try direct first, then API-capable mirrors)
-	const githubAPIPath = "https://api.github.com/repos/ShourGG/tr-panel-go/releases/latest"
-	apiURLs := []string{
-		githubAPIPath,
-		"https://cors.isteed.cc/" + githubAPIPath,
-		"https://gh.noki.icu/" + githubAPIPath,
-	}
-	apiClient := &http.Client{Timeout: 15 * time.Second}
-	var resp *http.Response
-	var err error
-	for _, apiURL := range apiURLs {
-		log.Printf("[升级] 尝试获取版本信息: %s", apiURL)
-		resp, err = apiClient.Get(apiURL)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			break
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		log.Printf("[升级] %s 失败，尝试下一个...", apiURL)
-	}
-	if err != nil || resp == nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法连接 GitHub API: "+err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-
-	var release struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("解析 GitHub 响应失败: "+err.Error()))
+	channel := getConfiguredUpdateChannel()
+	release, err := fetchChannelRelease(channel)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
 		return
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := trimReleaseVersion(release.TagName)
 	if latestVersion == currentVersion {
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已是最新版本 " + currentVersion, "upgraded": false})
 		return
 	}
 
 	// 2. Find binary asset
-	var downloadURL string
-	for _, a := range release.Assets {
-		if a.Name == "terraria-panel" {
-			downloadURL = a.BrowserDownloadURL
-			break
-		}
-	}
+	downloadURL := findReleaseAssetDownloadURL(release, "terraria-panel")
 	if downloadURL == "" {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到可下载的二进制文件"))
 		return
