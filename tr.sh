@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.3.18-dev.1"
+SCRIPT_VERSION="1.4.0"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
