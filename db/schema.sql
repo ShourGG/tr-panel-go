@@ -195,4 +195,34 @@ CREATE TABLE IF NOT EXISTS plugin_server (
 INSERT OR IGNORE INTO plugin_server (id, name, port, world_file)
 VALUES (1, 'TShock Plugin Server', 7777, 'plugin-test.wld');
 
+-- 备份记录表
+CREATE TABLE IF NOT EXISTS backup_records (
+    id TEXT PRIMARY KEY,
+    file_name TEXT NOT NULL,
+    room_id INTEGER NOT NULL,
+    room_name TEXT NOT NULL,
+    server_type TEXT NOT NULL,
+    world_file TEXT DEFAULT '',
+    backup_type TEXT NOT NULL DEFAULT 'full',
+    note TEXT DEFAULT '',
+    local_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    checksum_sha256 TEXT DEFAULT '',
+    storage_type TEXT NOT NULL DEFAULT 'local',
+    remote_bucket TEXT DEFAULT '',
+    remote_key TEXT DEFAULT '',
+    remote_etag TEXT DEFAULT '',
+    remote_url TEXT DEFAULT '',
+    upload_status TEXT NOT NULL DEFAULT 'pending',
+    upload_error TEXT DEFAULT '',
+    uploaded_at DATETIME,
+    last_verified_at DATETIME,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_records_room_id ON backup_records(room_id);
+CREATE INDEX IF NOT EXISTS idx_backup_records_created_at ON backup_records(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_records_upload_status ON backup_records(upload_status);
+
 -- 不再自动创建默认用户，让用户自己注册第一个管理员

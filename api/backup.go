@@ -2,6 +2,9 @@ package api
 
 import (
 	"archive/zip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +19,7 @@ import (
 	"terraria-panel/config"
 	"terraria-panel/db"
 	"terraria-panel/models"
+	"terraria-panel/services"
 	"terraria-panel/storage"
 	"terraria-panel/utils"
 
@@ -45,6 +49,156 @@ type backupRestoreAnalysis struct {
 	FatalIssues   []string              `json:"fatalIssues"`
 	Warnings      []string              `json:"warnings"`
 	Checks        []backupAnalysisCheck `json:"checks"`
+}
+
+func getBackupRecordStorage() storage.BackupRecordStorage {
+	return storage.NewSQLiteBackupRecordStorage(db.DB)
+}
+
+func enrichBackupSummariesWithRecords(backups []utils.BackupSummary) {
+	ids := make([]string, 0, len(backups))
+	for _, backup := range backups {
+		if strings.TrimSpace(backup.ID) != "" {
+			ids = append(ids, backup.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	records, err := getBackupRecordStorage().GetByIDs(ids)
+	if err != nil {
+		log.Printf("[Backup] Failed to load backup records: %v", err)
+		return
+	}
+
+	for i := range backups {
+		record, ok := records[backups[i].ID]
+		if !ok {
+			continue
+		}
+		backups[i].StorageType = record.StorageType
+		backups[i].RemoteBucket = record.RemoteBucket
+		backups[i].RemoteKey = record.RemoteKey
+		backups[i].RemoteURL = record.RemoteURL
+		backups[i].UploadStatus = record.UploadStatus
+		backups[i].UploadError = record.UploadError
+		backups[i].ChecksumSHA256 = record.ChecksumSHA256
+		if record.UploadedAt != nil {
+			backups[i].UploadedAt = record.UploadedAt.Local().Format("2006-01-02 15:04:05")
+		}
+		if record.LastVerifiedAt != nil {
+			backups[i].LastVerifiedAt = record.LastVerifiedAt.Local().Format("2006-01-02 15:04:05")
+		}
+	}
+}
+
+func computeFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func createBackupRecordFromSummary(summary utils.BackupSummary, localPath string, note string, remoteEnabled bool) *models.BackupRecord {
+	createdAt := parseBackupDisplayTime(summary.CreatedAt)
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+
+	uploadStatus := "local_only"
+	if remoteEnabled {
+		uploadStatus = "pending"
+	}
+
+	return &models.BackupRecord{
+		ID:             summary.ID,
+		FileName:       summary.Name,
+		RoomID:         summary.RoomID,
+		RoomName:       summary.RoomName,
+		ServerType:     summary.ServerType,
+		WorldFile:      summary.WorldFile,
+		BackupType:     summary.Type,
+		Note:           note,
+		LocalPath:      localPath,
+		FileSize:       summary.Size,
+		ChecksumSHA256: summary.ChecksumSHA256,
+		StorageType:    "local",
+		UploadStatus:   uploadStatus,
+		CreatedAt:      createdAt,
+		UpdatedAt:      time.Now(),
+	}
+}
+
+func syncBackupRecordToRemote(recordID string) {
+	recordStorage := getBackupRecordStorage()
+	record, err := recordStorage.GetByID(recordID)
+	if err != nil {
+		log.Printf("[Backup] Failed to load backup record %s for remote sync: %v", recordID, err)
+		return
+	}
+	if record == nil {
+		return
+	}
+
+	remoteService, err := services.NewBackupRemoteService(config.Load())
+	if err != nil {
+		log.Printf("[Backup] Remote backup service init failed: %v", err)
+		_ = recordStorage.UpdateRemoteState(recordID, record.StorageType, "failed", err.Error(), record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt)
+		return
+	}
+	if !remoteService.Enabled() {
+		return
+	}
+
+	result, err := remoteService.SyncBackup(context.Background(), record)
+	if err != nil {
+		log.Printf("[Backup] Remote backup sync failed for %s: %v", recordID, err)
+		_ = recordStorage.UpdateRemoteState(recordID, record.StorageType, "failed", err.Error(), record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt)
+		return
+	}
+
+	if err := recordStorage.UpdateRemoteState(recordID, result.StorageType, "uploaded", "", result.Bucket, result.Key, result.ETag, result.RemoteURL, &result.UploadedAt); err != nil {
+		log.Printf("[Backup] Failed to persist remote backup sync result for %s: %v", recordID, err)
+	}
+}
+
+func ensureBackupRecordByID(backupID string) (*models.BackupRecord, error) {
+	recordStorage := getBackupRecordStorage()
+	record, err := recordStorage.GetByID(backupID)
+	if err != nil {
+		return nil, err
+	}
+	if record != nil {
+		return record, nil
+	}
+
+	backupPath, err := resolveBackupPath(backupID)
+	if err != nil {
+		return nil, err
+	}
+	summary, _, err := utils.InspectBackupArchive(backupPath)
+	if err != nil {
+		return nil, err
+	}
+	checksum, err := computeFileSHA256(backupPath)
+	if err != nil {
+		return nil, err
+	}
+	summary.ChecksumSHA256 = checksum
+
+	newRecord := createBackupRecordFromSummary(summary, backupPath, "", config.Load().BackupRemoteEnabled)
+	if err := recordStorage.Upsert(newRecord); err != nil {
+		return nil, err
+	}
+	return newRecord, nil
 }
 
 func GetBackups(c *gin.Context) {
@@ -96,6 +250,8 @@ func GetBackups(c *gin.Context) {
 		}
 	})
 
+	enrichBackupSummariesWithRecords(backups)
+
 	c.JSON(http.StatusOK, models.SuccessResponse(backups))
 }
 
@@ -143,10 +299,33 @@ func CreateBackup(c *gin.Context) {
 		return
 	}
 
+	checksum, err := computeFileSHA256(zipPath)
+	if err != nil {
+		log.Printf("[Backup] Failed to compute backup checksum: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份创建成功，但计算校验失败"))
+		return
+	}
+	summary.ChecksumSHA256 = checksum
+
+	remoteEnabled := config.Load().BackupRemoteEnabled
+	record := createBackupRecordFromSummary(summary, zipPath, req.Note, remoteEnabled)
+	if err := getBackupRecordStorage().Upsert(record); err != nil {
+		log.Printf("[Backup] Failed to persist backup record: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份创建成功，但记录备份状态失败"))
+		return
+	}
+	if remoteEnabled {
+		go syncBackupRecordToRemote(record.ID)
+	}
+
 	log.Printf("[Backup] Backup created successfully: %s (size: %d bytes)", zipName, summary.Size)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"backup":  summary,
 		"message": "备份创建成功",
+		"remoteSync": gin.H{
+			"enabled": remoteEnabled,
+			"status":  record.UploadStatus,
+		},
 	}))
 }
 
@@ -185,11 +364,33 @@ func UploadBackup(c *gin.Context) {
 
 	summary.Name = finalName
 	summary.ID = strings.TrimSuffix(finalName, ".zip")
+	checksum, err := computeFileSHA256(finalPath)
+	if err != nil {
+		log.Printf("[Backup] Failed to compute uploaded backup checksum: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份上传成功，但计算校验失败"))
+		return
+	}
+	summary.ChecksumSHA256 = checksum
+
+	remoteEnabled := config.Load().BackupRemoteEnabled
+	record := createBackupRecordFromSummary(summary, finalPath, "", remoteEnabled)
+	if err := getBackupRecordStorage().Upsert(record); err != nil {
+		log.Printf("[Backup] Failed to persist uploaded backup record: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份上传成功，但记录备份状态失败"))
+		return
+	}
+	if remoteEnabled {
+		go syncBackupRecordToRemote(record.ID)
+	}
 
 	log.Printf("[Backup] Backup uploaded successfully: %s", finalName)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"backup":  summary,
 		"message": "备份上传成功",
+		"remoteSync": gin.H{
+			"enabled": remoteEnabled,
+			"status":  record.UploadStatus,
+		},
 	}))
 }
 
@@ -322,6 +523,9 @@ func DeleteBackup(c *gin.Context) {
 	}
 
 	log.Printf("[Backup] Backup deleted successfully: %s", filepath.Base(backupPath))
+	if err := getBackupRecordStorage().Delete(c.Param("id")); err != nil {
+		log.Printf("[Backup] Failed to delete backup record %s: %v", c.Param("id"), err)
+	}
 	c.JSON(http.StatusOK, models.MessageResponse("备份删除成功"))
 }
 
@@ -343,6 +547,100 @@ func DownloadBackup(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.zip", backupID))
 	c.Header("Content-Type", "application/zip")
 	c.File(backupPath)
+}
+
+func SyncBackupToRemote(c *gin.Context) {
+	cfg := config.Load()
+	if !cfg.BackupRemoteEnabled {
+		c.JSON(http.StatusConflict, models.ErrorResponse("远端备份未启用"))
+		return
+	}
+
+	record, err := ensureBackupRecordByID(c.Param("id"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
+			return
+		}
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("初始化备份记录失败: "+err.Error()))
+		return
+	}
+
+	recordStorage := getBackupRecordStorage()
+	if err := recordStorage.UpdateRemoteState(record.ID, record.StorageType, "pending", "", record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新备份同步状态失败"))
+		return
+	}
+
+	remoteService, err := services.NewBackupRemoteService(cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("初始化远端备份服务失败: "+err.Error()))
+		return
+	}
+	result, err := remoteService.SyncBackup(context.Background(), record)
+	if err != nil {
+		_ = recordStorage.UpdateRemoteState(record.ID, record.StorageType, "failed", err.Error(), record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("同步到远端失败: "+err.Error()))
+		return
+	}
+
+	if err := recordStorage.UpdateRemoteState(record.ID, result.StorageType, "uploaded", "", result.Bucket, result.Key, result.ETag, result.RemoteURL, &result.UploadedAt); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存远端备份状态失败"))
+		return
+	}
+
+	record, _ = recordStorage.GetByID(record.ID)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "远端备份同步成功",
+		"record":  record,
+	}))
+}
+
+func VerifyBackupRemote(c *gin.Context) {
+	cfg := config.Load()
+	if !cfg.BackupRemoteEnabled {
+		c.JSON(http.StatusConflict, models.ErrorResponse("远端备份未启用"))
+		return
+	}
+
+	record, err := ensureBackupRecordByID(c.Param("id"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
+			return
+		}
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("初始化备份记录失败: "+err.Error()))
+		return
+	}
+
+	if strings.TrimSpace(record.RemoteKey) == "" {
+		c.JSON(http.StatusConflict, models.ErrorResponse("该备份尚未同步到远端"))
+		return
+	}
+
+	remoteService, err := services.NewBackupRemoteService(cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("初始化远端备份服务失败: "+err.Error()))
+		return
+	}
+
+	result, err := remoteService.VerifyBackup(context.Background(), record)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("远端备份校验失败: "+err.Error()))
+		return
+	}
+
+	if err := getBackupRecordStorage().UpdateVerification(record.ID, result.VerifiedAt); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存校验时间失败"))
+		return
+	}
+
+	record, _ = getBackupRecordStorage().GetByID(record.ID)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "远端备份校验成功",
+		"record":  record,
+		"result":  result,
+	}))
 }
 
 func analyzeBackupRestore(backupPath string, targetRoom *models.Room) (backupRestoreAnalysis, error) {

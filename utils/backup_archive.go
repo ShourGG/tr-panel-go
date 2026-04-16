@@ -46,6 +46,15 @@ type BackupSummary struct {
 	HasManifest        bool     `json:"hasManifest"`
 	MetadataSource     string   `json:"metadataSource"`
 	DetectedWorldFiles []string `json:"detectedWorldFiles,omitempty"`
+	StorageType        string   `json:"storageType,omitempty"`
+	RemoteBucket       string   `json:"remoteBucket,omitempty"`
+	RemoteKey          string   `json:"remoteKey,omitempty"`
+	RemoteURL          string   `json:"remoteUrl,omitempty"`
+	UploadStatus       string   `json:"uploadStatus,omitempty"`
+	UploadError        string   `json:"uploadError,omitempty"`
+	ChecksumSHA256     string   `json:"checksumSha256,omitempty"`
+	UploadedAt         string   `json:"uploadedAt,omitempty"`
+	LastVerifiedAt     string   `json:"lastVerifiedAt,omitempty"`
 }
 
 func NewBackupManifest(roomID int, roomName, serverType, worldFile, backupType, note string, createdAt time.Time) BackupManifest {

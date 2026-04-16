@@ -689,7 +689,7 @@ func SearchWorkshopMods(c *gin.Context) {
 	var queryType string
 	if query != "" {
 		// 有搜索关键词时使用文本搜索排序
-		queryType = "9"
+		queryType = "12"
 	} else {
 		switch sortBy {
 		case "total_subscriptions":
@@ -862,6 +862,9 @@ func SearchWorkshopMods(c *gin.Context) {
 		}
 	}
 	actualTotal := result.Response.Total
+	if query != "" && len(candidates) > 0 && actualTotal > len(candidates) {
+		actualTotal = len(candidates)
+	}
 	if len(items) == 0 && actualTotal > 0 {
 		actualTotal = (pageInt - 1) * pageSizeInt
 		log.Printf("⚠️ 第%d页无数据，限制总数为: %d", pageInt, actualTotal)
