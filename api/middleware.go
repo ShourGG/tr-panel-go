@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -46,8 +47,12 @@ func loadAllowedOrigins() {
 	}
 }
 
-func isOriginAllowed(origin string) bool {
+func isOriginAllowed(origin string, r *http.Request) bool {
 	if origin == "" {
+		return true
+	}
+
+	if isSameOriginRequest(origin, r) {
 		return true
 	}
 
@@ -60,6 +65,47 @@ func isOriginAllowed(origin string) bool {
 	return ok
 }
 
+func isSameOriginRequest(origin string, r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+
+	parsedOrigin, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsedOrigin.Scheme == "" || parsedOrigin.Host == "" {
+		return false
+	}
+
+	requestScheme := requestScheme(r)
+	requestHost := strings.TrimSpace(r.Host)
+	if requestScheme == "" || requestHost == "" {
+		return false
+	}
+
+	originScheme := strings.ToLower(parsedOrigin.Scheme)
+	originHost := strings.ToLower(parsedOrigin.Host)
+
+	return originScheme == strings.ToLower(requestScheme) && originHost == strings.ToLower(requestHost)
+}
+
+func requestScheme(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		parts := strings.Split(forwardedProto, ",")
+		if len(parts) > 0 {
+			return strings.ToLower(strings.TrimSpace(parts[0]))
+		}
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
+}
+
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
@@ -67,7 +113,7 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		origin := c.GetHeader("Origin")
 		if origin != "" {
-			if !isOriginAllowed(origin) {
+			if !isOriginAllowed(origin, c.Request) {
 				if c.Request.Method == "OPTIONS" {
 					c.AbortWithStatus(http.StatusForbidden)
 					return

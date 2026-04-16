@@ -13,7 +13,7 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return isOriginAllowed(r.Header.Get("Origin"))
+		return isOriginAllowed(r.Header.Get("Origin"), r)
 	},
 }
 
@@ -33,7 +33,7 @@ var wsManager = &WebSocketManager{
 }
 
 func authorizeWebSocketRequest(c *gin.Context) bool {
-	if !isOriginAllowed(c.GetHeader("Origin")) {
+	if !isOriginAllowed(c.GetHeader("Origin"), c.Request) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "不允许的来源"})
 		return false
 	}
