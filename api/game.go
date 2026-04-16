@@ -2711,7 +2711,12 @@ func isPackageManagerLockError(output string) bool {
 		"Could not get lock /var/lib/dpkg/lock-frontend",
 		"Unable to acquire the dpkg frontend lock",
 		"Could not get lock /var/lib/dpkg/lock",
+		"Could not get lock /var/lib/apt/lists/lock",
+		"Could not get lock /var/cache/apt/archives/lock",
 		"Unable to lock the administration directory",
+		"Unable to lock directory /var/lib/apt/lists/",
+		"Unable to lock directory /var/cache/apt/archives/",
+		"Waiting for cache lock",
 		"is another process using it?",
 	}
 	for _, marker := range lockMarkers {
