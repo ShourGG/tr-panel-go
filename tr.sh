@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.3.17"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -49,13 +49,11 @@ CHANNEL_FILE="${INSTALL_DIR}/update-channel"
 # ────────── GitHub 镜像支持 ──────────
 # 镜像列表：名称|API前缀|下载前缀|Raw前缀
 MIRRORS=(
+    "xs.shour.ccwu.cc:5678 (推荐)|http://xs.shour.ccwu.cc:5678/https://api.github.com|http://xs.shour.ccwu.cc:5678/https://github.com|http://xs.shour.ccwu.cc:5678/https://raw.githubusercontent.com"
     "GitHub 官方 (直连)|https://api.github.com|https://github.com|https://raw.githubusercontent.com"
-    "ghfast.top|https://api.github.com|https://ghfast.top/https://github.com|https://ghfast.top/https://raw.githubusercontent.com"
-    "cors.isteed.cc|https://api.github.com|https://cors.isteed.cc/https://github.com|https://cors.isteed.cc/https://raw.githubusercontent.com"
-    "gh.noki.icu|https://api.github.com|https://gh.noki.icu/https://github.com|https://gh.noki.icu/https://raw.githubusercontent.com"
 )
 
-# 当前选中的镜像索引（默认 0 = 直连）
+# 当前选中的镜像索引（默认 0 = xs.shour.ccwu.cc:5678）
 MIRROR_IDX=0
 
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
@@ -241,7 +239,7 @@ version_gt() {
 # 检查脚本更新
 check_script_update() {
     # 获取远程版本号（超时1秒）
-    REMOTE_VERSION=$(timeout 1 curl -s --connect-timeout 1 --max-time 1 https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh 2>/dev/null | grep "^SCRIPT_VERSION=" | head -1 | cut -d'"' -f2)
+    REMOTE_VERSION=$(timeout 1 curl -s --connect-timeout 1 --max-time 1 "$(get_raw_url 'tr.sh')" 2>/dev/null | grep "^SCRIPT_VERSION=" | head -1 | cut -d'"' -f2)
     
     if [ -z "$REMOTE_VERSION" ]; then
         return
