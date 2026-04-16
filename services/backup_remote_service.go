@@ -199,8 +199,9 @@ func (s *r2BackupRemoteService) VerifyBackup(ctx context.Context, record *models
 		return nil, fmt.Errorf("remote backup size mismatch: remote=%d local=%d", stat.Size, record.FileSize)
 	}
 
+	remoteChecksum := getObjectMetadataValue(stat.UserMetadata, "sha256")
 	if record.ChecksumSHA256 != "" {
-		if remoteChecksum := strings.TrimSpace(stat.UserMetadata.Get("X-Amz-Meta-Sha256")); remoteChecksum != "" && !strings.EqualFold(remoteChecksum, record.ChecksumSHA256) {
+		if remoteChecksum != "" && !strings.EqualFold(remoteChecksum, record.ChecksumSHA256) {
 			return nil, fmt.Errorf("remote backup checksum mismatch")
 		}
 	}
@@ -211,10 +212,27 @@ func (s *r2BackupRemoteService) VerifyBackup(ctx context.Context, record *models
 		RemoteURL:      record.RemoteURL,
 		RemoteETag:     strings.Trim(stat.ETag, "\""),
 		RemoteSize:     stat.Size,
-		ChecksumSHA256: strings.TrimSpace(stat.UserMetadata.Get("X-Amz-Meta-Sha256")),
+		ChecksumSHA256: remoteChecksum,
 		VerifiedAt:     time.Now(),
 	}
 	return result, nil
+}
+
+func getObjectMetadataValue(metadata map[string]string, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+
+	normalizedKey := strings.ToLower(strings.TrimSpace(key))
+	for metaKey, value := range metadata {
+		candidate := strings.ToLower(strings.TrimSpace(metaKey))
+		candidate = strings.TrimPrefix(candidate, "x-amz-meta-")
+		if candidate == normalizedKey {
+			return strings.TrimSpace(value)
+		}
+	}
+
+	return ""
 }
 
 func (s *r2BackupRemoteService) buildObjectKey(record *models.BackupRecord) string {
