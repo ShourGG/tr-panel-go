@@ -126,6 +126,43 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ---
 
+## 可选：下载直出加速
+
+面板默认可以直接由 Go 进程完成备份下载、文件下载。  
+如果你前面还有 Nginx，也可以开启 `X-Accel-Redirect`，让备份 zip 和文件管理里的普通文件由 Nginx 直出，减轻 Go 进程压力。
+
+`.env` 示例：
+
+```bash
+DOWNLOAD_TICKET_TTL=90
+DOWNLOAD_ACCEL_ENABLED=true
+DOWNLOAD_ACCEL_TYPE=nginx
+DOWNLOAD_ACCEL_BACKUP_PREFIX=/__downloads/backups
+DOWNLOAD_ACCEL_DATA_PREFIX=/__downloads/data
+```
+
+Nginx 示例：
+
+```nginx
+location /__downloads/backups/ {
+    internal;
+    alias /opt/tr-panel/data/backups/;
+}
+
+location /__downloads/data/ {
+    internal;
+    alias /opt/tr-panel/data/;
+}
+```
+
+说明：
+
+- 不配 Nginx 也能正常下载，面板会自动回退到 Go 直出
+- 目录打包下载、动态 zip 下载仍然走 Go 流式输出
+- 下载链接改为短时票据，不再把长期登录 token 直接挂在 URL 上
+
+---
+
 ## 性能基准
 
 | 指标 | 数值 |

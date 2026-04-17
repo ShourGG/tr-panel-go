@@ -530,20 +530,14 @@ func DeleteBackup(c *gin.Context) {
 }
 
 func DownloadBackup(c *gin.Context) {
-	backupPath, err := resolveBackupPath(c.Param("id"))
-	if err != nil {
+	backupID := strings.TrimSpace(c.Param("id"))
+	if err := serveBackupDownload(c, backupID); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
 			return
 		}
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的备份ID"))
-		return
 	}
-
-	backupName := filepath.Base(backupPath)
-	log.Printf("[Backup] Downloading backup: %s", backupName)
-	c.Header("Content-Type", "application/zip")
-	c.FileAttachment(backupPath, backupName)
 }
 
 func SyncBackupToRemote(c *gin.Context) {

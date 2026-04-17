@@ -118,7 +118,7 @@ func streamZipArchive(c *gin.Context, sourcePath string, includeRoot bool) error
 	}
 
 	c.Header("Content-Type", "application/zip")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", info.Name()))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", getManagedDownloadName(info, true)))
 
 	zipWriter := zip.NewWriter(c.Writer)
 	defer zipWriter.Close()
@@ -559,25 +559,28 @@ func DownloadFile(c *gin.Context) {
 		return
 	}
 
-	fullPath, err := resolveDataPath(relativePath)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("非法文件路径"))
-		return
-	}
-
-	info, err := os.Stat(fullPath)
-	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("文件不存在"))
-		return
-	}
-
 	archiveDownload := strings.EqualFold(c.DefaultQuery("archive", "false"), "true")
-	if info.IsDir() || archiveDownload {
-		if err := streamZipArchive(c, fullPath, info.IsDir()); err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, models.ErrorResponse("打包下载失败: "+err.Error()))
+	if err := serveManagedFileDownload(c, relativePath, archiveDownload); err != nil {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			c.JSON(http.StatusNotFound, models.ErrorResponse("文件不存在"))
+		default:
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("文件下载失败: "+err.Error()))
 		}
-		return
+	}
+}
+
+func getManagedDownloadName(info os.FileInfo, archive bool) string {
+	if info == nil {
+		return "download"
 	}
 
-	c.FileAttachment(fullPath, info.Name())
+	name := info.Name()
+	if info.IsDir() || archive {
+		if strings.HasSuffix(strings.ToLower(name), ".zip") {
+			return name
+		}
+		return name + ".zip"
+	}
+	return name
 }

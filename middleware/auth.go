@@ -67,23 +67,9 @@ func ExtractRequestToken(r *http.Request, allowQueryToken bool) (string, error) 
 }
 
 func ParseAndValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(
-		tokenString,
-		&Claims{},
-		func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-		jwt.WithIssuer(tokenIssuer),
-		jwt.WithLeeway(5*time.Second),
-	)
-	if err != nil || !token.Valid {
+	claims := &Claims{}
+	if err := ParseJWTWithClaims(tokenString, claims, jwt.WithIssuer(tokenIssuer), jwt.WithLeeway(5*time.Second)); err != nil {
 		return nil, errors.New("invalid token")
-	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok {
-		return nil, errors.New("invalid token claims")
 	}
 
 	return claims, nil
@@ -110,8 +96,30 @@ func GenerateToken(user *models.User) (string, error) {
 			Subject:   user.Username,
 		},
 	}
+	return SignJWT(claims)
+}
+
+func SignJWT(claims jwt.Claims) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
+}
+
+func ParseJWTWithClaims(tokenString string, claims jwt.Claims, opts ...jwt.ParserOption) error {
+	parserOptions := append([]jwt.ParserOption{
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+	}, opts...)
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		claims,
+		func(token *jwt.Token) (interface{}, error) {
+			return jwtSecret, nil
+		},
+		parserOptions...,
+	)
+	if err != nil || !token.Valid {
+		return errors.New("invalid token")
+	}
+	return nil
 }
 
 func authMiddleware(allowQueryToken bool) gin.HandlerFunc {

@@ -662,7 +662,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.20-dev.1"
+	return "1.3.20-dev.2"
 }
 
 func normalizeUpdateChannel(channel string) string {
