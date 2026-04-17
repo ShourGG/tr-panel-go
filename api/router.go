@@ -128,7 +128,6 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.GET("/plugin-server/tshock-version", DetectTShockVersion)
 			protected.GET("/files", ListFiles)
 			protected.GET("/files/read", ReadFile)
-			protected.GET("/files/download", DownloadFile)
 			protected.POST("/files/write", WriteFile)
 			protected.POST("/files/upload", UploadFile)
 			protected.POST("/files/extract", ExtractFile)
@@ -142,7 +141,6 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.POST("/backups/:id/analyze", AnalyzeBackup)
 			protected.POST("/backups/:id/restore", RestoreBackup)
 			protected.DELETE("/backups/:id", DeleteBackup)
-			protected.GET("/backups/:id/download", DownloadBackup)
 			protected.POST("/tasks", CreateTask)
 			protected.PUT("/tasks/:id", UpdateTask)
 			protected.DELETE("/tasks/:id", DeleteTask)
@@ -161,6 +159,12 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.PUT("/plugin-configs/content", SavePluginConfigByQuery)
 			protected.GET("/plugin-configs/:filename", GetPluginConfigContent)
 			protected.PUT("/plugin-configs/:filename", SavePluginConfig)
+		}
+		downloadProtected := apiGroup.Group("")
+		downloadProtected.Use(middleware.DownloadAuthMiddleware())
+		{
+			downloadProtected.GET("/files/download", DownloadFile)
+			downloadProtected.GET("/backups/:id/download", DownloadBackup)
 		}
 		apiGroup.GET("/ws", HandleWebSocket)
 		apiGroup.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)

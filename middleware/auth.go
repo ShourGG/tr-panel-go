@@ -51,6 +51,21 @@ func ExtractBearerToken(authHeader string) (string, error) {
 	return tokenString, nil
 }
 
+func ExtractRequestToken(r *http.Request, allowQueryToken bool) (string, error) {
+	if tokenString, err := ExtractBearerToken(r.Header.Get("Authorization")); err == nil {
+		return tokenString, nil
+	}
+
+	if allowQueryToken {
+		tokenString := strings.TrimSpace(r.URL.Query().Get("token"))
+		if tokenString != "" {
+			return tokenString, nil
+		}
+	}
+
+	return "", errors.New("missing token")
+}
+
 func ParseAndValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(
 		tokenString,
@@ -75,11 +90,10 @@ func ParseAndValidateToken(tokenString string) (*Claims, error) {
 }
 
 func ExtractWebSocketToken(r *http.Request) string {
-	if tokenString, err := ExtractBearerToken(r.Header.Get("Authorization")); err == nil {
+	if tokenString, err := ExtractRequestToken(r, true); err == nil {
 		return tokenString
 	}
-
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	return ""
 }
 
 func GenerateToken(user *models.User) (string, error) {
@@ -100,9 +114,9 @@ func GenerateToken(user *models.User) (string, error) {
 	return token.SignedString(jwtSecret)
 }
 
-func AuthMiddleware() gin.HandlerFunc {
+func authMiddleware(allowQueryToken bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString, err := ExtractBearerToken(c.GetHeader("Authorization"))
+		tokenString, err := ExtractRequestToken(c.Request, allowQueryToken)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少认证令牌"})
 			c.Abort()
@@ -121,6 +135,14 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Set("role", claims.Role)
 		c.Next()
 	}
+}
+
+func AuthMiddleware() gin.HandlerFunc {
+	return authMiddleware(false)
+}
+
+func DownloadAuthMiddleware() gin.HandlerFunc {
+	return authMiddleware(true)
 }
 
 func AdminMiddleware() gin.HandlerFunc {
