@@ -857,12 +857,90 @@ func resolveBackupPath(backupID string) (string, error) {
 		return "", fmt.Errorf("invalid backup id")
 	}
 
-	backupPath := filepath.Join(config.BackupDir, safeID+".zip")
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		return "", os.ErrNotExist
+	if recordPath, err := resolveBackupPathFromRecord(safeID); err != nil {
+		return "", err
+	} else if recordPath != "" {
+		return recordPath, nil
 	}
 
-	return backupPath, nil
+	candidates := []string{
+		filepath.Join(config.BackupDir, safeID),
+	}
+	if !strings.EqualFold(filepath.Ext(safeID), ".zip") {
+		candidates = append([]string{filepath.Join(config.BackupDir, safeID+".zip")}, candidates...)
+	}
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
+func resolveBackupPathFromRecord(backupID string) (string, error) {
+	record, err := getBackupRecordStorage().GetByID(backupID)
+	if err != nil || record == nil {
+		return "", err
+	}
+
+	candidates := make([]string, 0, 4)
+	if localPath := strings.TrimSpace(record.LocalPath); localPath != "" {
+		candidates = append(candidates, localPath)
+		if !filepath.IsAbs(localPath) {
+			candidates = append(candidates, filepath.Join(config.BackupDir, filepath.Base(localPath)))
+		}
+	}
+
+	if fileName := filepath.Base(strings.TrimSpace(record.FileName)); fileName != "" && fileName != "." {
+		candidates = append(candidates, filepath.Join(config.BackupDir, fileName))
+		if !strings.EqualFold(filepath.Ext(fileName), ".zip") {
+			candidates = append(candidates, filepath.Join(config.BackupDir, fileName+".zip"))
+		}
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		cleanPath := filepath.Clean(candidate)
+		if cleanPath == "" || cleanPath == "." || !isBackupPathAllowed(cleanPath) {
+			continue
+		}
+		if _, exists := seen[cleanPath]; exists {
+			continue
+		}
+		seen[cleanPath] = struct{}{}
+
+		info, err := os.Stat(cleanPath)
+		if err == nil && !info.IsDir() {
+			return cleanPath, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+
+	return "", nil
+}
+
+func isBackupPathAllowed(targetPath string) bool {
+	baseDir := filepath.Clean(config.BackupDir)
+	cleanTarget := filepath.Clean(targetPath)
+
+	relativePath, err := filepath.Rel(baseDir, cleanTarget)
+	if err != nil {
+		return false
+	}
+
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
+		return false
+	}
+
+	return true
 }
 
 func uniqueBackupFileName(fileName string) string {

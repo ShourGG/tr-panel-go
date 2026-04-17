@@ -59,6 +59,7 @@ type githubReleaseAsset struct {
 type githubRelease struct {
 	TagName    string               `json:"tag_name"`
 	Name       string               `json:"name"`
+	Body       string               `json:"body"`
 	HTMLURL    string               `json:"html_url"`
 	Draft      bool                 `json:"draft"`
 	Prerelease bool                 `json:"prerelease"`
@@ -650,7 +651,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.18-dev.7"
+	return "1.3.18-dev.9"
 }
 
 func normalizeUpdateChannel(channel string) string {
@@ -769,6 +770,7 @@ func GetUpdateInfo(c *gin.Context) {
 		"hasUpdate":      false,
 		"updateUrl":      githubRepoReleases,
 		"downloadUrl":    "",
+		"releaseNotes":   "",
 	}
 
 	release, err := fetchChannelRelease(channel)
@@ -783,6 +785,7 @@ func GetUpdateInfo(c *gin.Context) {
 	response["latestTag"] = release.TagName
 	response["updateUrl"] = release.HTMLURL
 	response["downloadUrl"] = findReleaseAssetDownloadURL(release, "terraria-panel")
+	response["releaseNotes"] = strings.TrimSpace(strings.ReplaceAll(release.Body, "\r\n", "\n"))
 	response["hasUpdate"] = latestVersion != currentVersion
 	c.JSON(http.StatusOK, models.SuccessResponse(response))
 }
