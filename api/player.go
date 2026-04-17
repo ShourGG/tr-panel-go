@@ -129,7 +129,7 @@ func BanPlayer(c *gin.Context) {
 
 	message := "玩家 " + player.Name + " 已标记为封禁"
 	if player.Status == "online" {
-		if err := dispatchPlayerCommand(player, fmt.Sprintf("ban %s %s", player.Name, reason)); err != nil {
+		if err := dispatchBanCommand(player, reason); err != nil {
 			message += "，但未能同步服务器封禁命令: " + err.Error()
 		} else {
 			message += "，并已同步到运行中的服务器"
@@ -162,7 +162,7 @@ func UnbanPlayer(c *gin.Context) {
 
 	message := "玩家 " + player.Name + " 已解除封禁标记"
 	if player.Status == "online" {
-		if err := dispatchPlayerCommand(player, fmt.Sprintf("unban %s", player.Name)); err != nil {
+		if err := dispatchUnbanCommand(player); err != nil {
 			message += "，但未能同步服务器解封命令: " + err.Error()
 		} else {
 			message += "，并已同步到运行中的服务器"
@@ -366,4 +366,42 @@ func dispatchPlayerCommand(player *playerActionTarget, command string) error {
 	}
 
 	return process.SendCommand(command)
+}
+
+func normalizeRoomRuntimeType(roomType string) string {
+	switch strings.ToLower(strings.TrimSpace(roomType)) {
+	case "tshock":
+		return "tshock"
+	case "tmodloader", "tmod":
+		return "tmodloader"
+	default:
+		return "vanilla"
+	}
+}
+
+func dispatchBanCommand(player *playerActionTarget, reason string) error {
+	switch normalizeRoomRuntimeType(player.RoomType) {
+	case "tshock":
+		command := fmt.Sprintf("/ban add %s", player.Name)
+		trimmedReason := strings.TrimSpace(reason)
+		if trimmedReason != "" {
+			command += " " + trimmedReason
+		}
+		return dispatchPlayerCommand(player, command)
+	case "tmodloader", "vanilla":
+		return dispatchPlayerCommand(player, fmt.Sprintf("ban %s", player.Name))
+	default:
+		return dispatchPlayerCommand(player, fmt.Sprintf("ban %s", player.Name))
+	}
+}
+
+func dispatchUnbanCommand(player *playerActionTarget) error {
+	switch normalizeRoomRuntimeType(player.RoomType) {
+	case "tshock":
+		return dispatchPlayerCommand(player, fmt.Sprintf("/ban del %s", player.Name))
+	case "tmodloader", "vanilla":
+		return fmt.Errorf("%s 当前不支持通过控制台命令在线解封，请改为手动处理 banlist", formatPlayerRoomType(player.RoomType))
+	default:
+		return fmt.Errorf("当前服务器类型不支持在线解封")
+	}
 }
