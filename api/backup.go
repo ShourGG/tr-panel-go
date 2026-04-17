@@ -540,13 +540,10 @@ func DownloadBackup(c *gin.Context) {
 		return
 	}
 
-	backupID := strings.TrimSuffix(filepath.Base(backupPath), ".zip")
-	log.Printf("[Backup] Downloading backup: %s", backupID)
-	c.Header("Content-Description", "File Transfer")
-	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.zip", backupID))
+	backupName := filepath.Base(backupPath)
+	log.Printf("[Backup] Downloading backup: %s", backupName)
 	c.Header("Content-Type", "application/zip")
-	c.File(backupPath)
+	c.FileAttachment(backupPath, backupName)
 }
 
 func SyncBackupToRemote(c *gin.Context) {
