@@ -467,7 +467,7 @@ type steamWorkshopQueryFile struct {
 
 type steamWorkshopQueryResponse struct {
 	Response struct {
-		Total          int                     `json:"total"`
+		Total          int                      `json:"total"`
 		PublishedFiles []steamWorkshopQueryFile `json:"publishedfiledetails"`
 	} `json:"response"`
 }
@@ -1169,6 +1169,35 @@ func extractModName(fileName string) string {
 	}
 	return name
 }
+func normalizeModName(name string) string {
+	return strings.TrimSuffix(strings.TrimSpace(name), ".tmod")
+}
+func buildModNameAliases(names ...string) map[string]struct{} {
+	aliases := make(map[string]struct{})
+	for _, raw := range names {
+		name := normalizeModName(raw)
+		if name == "" {
+			continue
+		}
+		aliases[name] = struct{}{}
+		aliases[extractModName(name+".tmod")] = struct{}{}
+	}
+	return aliases
+}
+func matchesModName(aliases map[string]struct{}, candidate string) bool {
+	if len(aliases) == 0 {
+		return false
+	}
+	name := normalizeModName(candidate)
+	if name == "" {
+		return false
+	}
+	if _, ok := aliases[name]; ok {
+		return true
+	}
+	_, ok := aliases[extractModName(name+".tmod")]
+	return ok
+}
 func extractVersionFromPath(filePath string) string {
 	dir := filepath.Dir(filePath)
 	dirName := filepath.Base(dir)
@@ -1305,12 +1334,14 @@ func DisableMod(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("MOD 禁用成功"))
 }
 func DeleteMod(c *gin.Context) {
-	modName := c.Param("name")
+	modName := normalizeModName(c.Param("name"))
 	log.Printf("🗑️ 开始删除MOD: %s", modName)
 	modDir := filepath.Join(config.DataDir, "tModLoader", "Mods")
 	enabledFile := filepath.Join(modDir, "enabled.json")
 	mappingFile := filepath.Join(modDir, "workshop_mapping.json")
 	var deletedFile string
+	var storedModName string
+	requestAliases := buildModNameAliases(modName)
 	files, err := os.ReadDir(modDir)
 	if err != nil {
 		log.Printf("❌ 读取MOD目录失败: %v", err)
@@ -1319,9 +1350,10 @@ func DeleteMod(c *gin.Context) {
 	}
 	for _, file := range files {
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".tmod") {
-			extractedName := extractModName(file.Name())
-			if extractedName == modName {
+			candidateName := strings.TrimSuffix(file.Name(), ".tmod")
+			if matchesModName(requestAliases, candidateName) {
 				deletedFile = file.Name()
+				storedModName = candidateName
 				break
 			}
 		}
@@ -1339,27 +1371,28 @@ func DeleteMod(c *gin.Context) {
 		return
 	}
 	log.Printf("✅ MOD文件已删除: %s", deletedFile)
+	deleteAliases := buildModNameAliases(modName, storedModName, deletedFile)
 	var enabledMods []string
 	if data, err := os.ReadFile(enabledFile); err == nil {
 		json.Unmarshal(data, &enabledMods)
 	}
 	newList := []string{}
 	for _, mod := range enabledMods {
-		if mod != modName && extractModName(mod+".tmod") != modName {
+		if !matchesModName(deleteAliases, mod) {
 			newList = append(newList, mod)
 		}
 	}
 	if len(newList) != len(enabledMods) {
 		data, _ := json.MarshalIndent(newList, "", "  ")
 		os.WriteFile(enabledFile, data, 0644)
-		log.Printf("✅ 已从 enabled.json 移除: %s", modName)
+		log.Printf("✅ 已从 enabled.json 移除: %s", storedModName)
 	}
 	if data, err := os.ReadFile(mappingFile); err == nil {
 		var mapping map[string]ModMappingData
 		if err := json.Unmarshal(data, &mapping); err == nil {
 			var workshopIdToDelete string
 			for workshopId, modData := range mapping {
-				if extractModName(modData.ModName+".tmod") == modName {
+				if matchesModName(deleteAliases, modData.ModName) {
 					workshopIdToDelete = workshopId
 					break
 				}
