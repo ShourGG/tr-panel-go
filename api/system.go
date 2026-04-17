@@ -63,7 +63,18 @@ type githubRelease struct {
 	HTMLURL    string               `json:"html_url"`
 	Draft      bool                 `json:"draft"`
 	Prerelease bool                 `json:"prerelease"`
+	PublishedAt string              `json:"published_at"`
 	Assets     []githubReleaseAsset `json:"assets"`
+}
+
+type parsedReleaseVersion struct {
+	Major        int
+	Minor        int
+	Patch        int
+	PreLabel     string
+	PreNumber    int
+	HasPreNumber bool
+	Valid        bool
 }
 
 func getInstalledTModLoaderTerrariaVersion() string {
@@ -651,7 +662,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.3.18-dev.10"
+	return "1.3.18-dev.11"
 }
 
 func normalizeUpdateChannel(channel string) string {
@@ -674,6 +685,148 @@ func buildGitHubReleaseAPIURLs(apiPath string) []string {
 		"https://cors.isteed.cc/" + apiPath,
 		"https://gh.noki.icu/" + apiPath,
 	}
+}
+
+func parseReleaseVersion(tag string) parsedReleaseVersion {
+	raw := strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	if raw == "" {
+		return parsedReleaseVersion{}
+	}
+
+	basePart := raw
+	prePart := ""
+	if dashIndex := strings.Index(raw, "-"); dashIndex >= 0 {
+		basePart = raw[:dashIndex]
+		prePart = raw[dashIndex+1:]
+	}
+
+	baseSegments := strings.Split(basePart, ".")
+	if len(baseSegments) != 3 {
+		return parsedReleaseVersion{}
+	}
+
+	major, err := strconv.Atoi(baseSegments[0])
+	if err != nil {
+		return parsedReleaseVersion{}
+	}
+
+	minor, err := strconv.Atoi(baseSegments[1])
+	if err != nil {
+		return parsedReleaseVersion{}
+	}
+
+	patch, err := strconv.Atoi(baseSegments[2])
+	if err != nil {
+		return parsedReleaseVersion{}
+	}
+
+	parsed := parsedReleaseVersion{
+		Major: major,
+		Minor: minor,
+		Patch: patch,
+		Valid: true,
+	}
+
+	if prePart == "" {
+		return parsed
+	}
+
+	preSegments := strings.Split(prePart, ".")
+	parsed.PreLabel = preSegments[0]
+	if len(preSegments) > 1 {
+		if preNumber, err := strconv.Atoi(preSegments[len(preSegments)-1]); err == nil {
+			parsed.PreNumber = preNumber
+			parsed.HasPreNumber = true
+		}
+	}
+
+	return parsed
+}
+
+func parseReleasePublishedAt(value string) time.Time {
+	publishedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}
+	}
+	return publishedAt
+}
+
+func compareReleasePriority(a githubRelease, b githubRelease) int {
+	parsedA := parseReleaseVersion(a.TagName)
+	parsedB := parseReleaseVersion(b.TagName)
+	if parsedA.Valid && parsedB.Valid {
+		switch {
+		case parsedA.Major != parsedB.Major:
+			if parsedA.Major > parsedB.Major {
+				return 1
+			}
+			return -1
+		case parsedA.Minor != parsedB.Minor:
+			if parsedA.Minor > parsedB.Minor {
+				return 1
+			}
+			return -1
+		case parsedA.Patch != parsedB.Patch:
+			if parsedA.Patch > parsedB.Patch {
+				return 1
+			}
+			return -1
+		}
+
+		switch {
+		case parsedA.PreLabel == "" && parsedB.PreLabel != "":
+			return 1
+		case parsedA.PreLabel != "" && parsedB.PreLabel == "":
+			return -1
+		case parsedA.PreLabel == parsedB.PreLabel:
+			switch {
+			case parsedA.HasPreNumber && parsedB.HasPreNumber && parsedA.PreNumber != parsedB.PreNumber:
+				if parsedA.PreNumber > parsedB.PreNumber {
+					return 1
+				}
+				return -1
+			case parsedA.HasPreNumber && !parsedB.HasPreNumber:
+				return 1
+			case !parsedA.HasPreNumber && parsedB.HasPreNumber:
+				return -1
+			}
+		}
+	}
+
+	publishedAtA := parseReleasePublishedAt(a.PublishedAt)
+	publishedAtB := parseReleasePublishedAt(b.PublishedAt)
+	switch {
+	case publishedAtA.After(publishedAtB):
+		return 1
+	case publishedAtA.Before(publishedAtB):
+		return -1
+	default:
+		return strings.Compare(strings.TrimSpace(a.TagName), strings.TrimSpace(b.TagName))
+	}
+}
+
+func selectLatestChannelRelease(releases []githubRelease, channel string) *githubRelease {
+	var selected *githubRelease
+	for i := range releases {
+		release := &releases[i]
+		if release.Draft {
+			continue
+		}
+
+		if channel == updateChannelDev {
+			if !release.Prerelease {
+				continue
+			}
+		} else if release.Prerelease {
+			continue
+		}
+
+		if selected == nil || compareReleasePriority(*release, *selected) > 0 {
+			selected = release
+		}
+	}
+
+	return selected
 }
 
 func fetchChannelRelease(channel string) (*githubRelease, error) {
@@ -716,21 +869,8 @@ func fetchChannelRelease(channel string) (*githubRelease, error) {
 		return nil, fmt.Errorf("无法连接 GitHub Releases API: %w", lastErr)
 	}
 
-	for _, release := range releases {
-		if release.Draft {
-			continue
-		}
-
-		if channel == updateChannelDev {
-			if release.Prerelease {
-				return &release, nil
-			}
-			continue
-		}
-
-		if !release.Prerelease {
-			return &release, nil
-		}
+	if release := selectLatestChannelRelease(releases, channel); release != nil {
+		return release, nil
 	}
 
 	if channel == updateChannelDev {
