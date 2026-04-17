@@ -1,8 +1,11 @@
 package scheduler
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,9 +13,86 @@ import (
 	"time"
 
 	"terraria-panel/config"
+	"terraria-panel/db"
+	"terraria-panel/models"
+	"terraria-panel/services"
 	"terraria-panel/storage"
 	"terraria-panel/utils"
 )
+
+func computeBackupFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func parseBackupCreatedAt(value string) time.Time {
+	parsedTime, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.Local)
+	if err != nil {
+		return time.Now()
+	}
+	return parsedTime
+}
+
+func buildBackupRecord(summary utils.BackupSummary, localPath string, note string, remoteEnabled bool) *models.BackupRecord {
+	uploadStatus := "local_only"
+	if remoteEnabled {
+		uploadStatus = "pending"
+	}
+
+	return &models.BackupRecord{
+		ID:             summary.ID,
+		FileName:       summary.Name,
+		RoomID:         summary.RoomID,
+		RoomName:       summary.RoomName,
+		ServerType:     summary.ServerType,
+		WorldFile:      summary.WorldFile,
+		BackupType:     summary.Type,
+		Note:           note,
+		LocalPath:      localPath,
+		FileSize:       summary.Size,
+		ChecksumSHA256: summary.ChecksumSHA256,
+		StorageType:    "local",
+		UploadStatus:   uploadStatus,
+		CreatedAt:      parseBackupCreatedAt(summary.CreatedAt),
+		UpdatedAt:      time.Now(),
+	}
+}
+
+func syncScheduledBackupRecord(record *models.BackupRecord, recordStorage storage.BackupRecordStorage) {
+	if record == nil || recordStorage == nil {
+		return
+	}
+
+	remoteService, err := services.NewBackupRemoteService(config.Load())
+	if err != nil {
+		log.Printf("[BackupHandler] Remote backup service init failed: %v", err)
+		_ = recordStorage.UpdateRemoteState(record.ID, record.StorageType, "failed", err.Error(), record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt)
+		return
+	}
+	if !remoteService.Enabled() {
+		return
+	}
+
+	result, err := remoteService.SyncBackup(context.Background(), record)
+	if err != nil {
+		log.Printf("[BackupHandler] Remote backup sync failed for %s: %v", record.ID, err)
+		_ = recordStorage.UpdateRemoteState(record.ID, record.StorageType, "failed", err.Error(), record.RemoteBucket, record.RemoteKey, record.RemoteETag, record.RemoteURL, record.UploadedAt)
+		return
+	}
+
+	if err := recordStorage.UpdateRemoteState(record.ID, result.StorageType, "uploaded", "", result.Bucket, result.Key, result.ETag, result.RemoteURL, &result.UploadedAt); err != nil {
+		log.Printf("[BackupHandler] Failed to persist remote backup sync result for %s: %v", record.ID, err)
+	}
+}
 
 type BackupHandlerImpl struct {
 	roomStorage storage.RoomStorage
@@ -29,6 +109,9 @@ func (h *BackupHandlerImpl) CreateBackup(roomID int, backupType string, note str
 	if err != nil {
 		return fmt.Errorf("failed to get room: %w", err)
 	}
+	if room == nil {
+		return fmt.Errorf("room %d not found", roomID)
+	}
 	createdAt := time.Now()
 	zipName := utils.BuildBackupArchiveName(room.ID, room.Name, createdAt)
 	zipPath := filepath.Join(config.BackupDir, zipName)
@@ -42,6 +125,28 @@ func (h *BackupHandlerImpl) CreateBackup(roomID int, backupType string, note str
 	if err := utils.CreateBackupArchive(zipPath, roomDir, manifest); err != nil {
 		return fmt.Errorf("failed to create ZIP file: %w", err)
 	}
+
+	summary, _, err := utils.InspectBackupArchive(zipPath)
+	if err != nil {
+		return fmt.Errorf("backup created but inspect failed: %w", err)
+	}
+
+	checksum, err := computeBackupFileSHA256(zipPath)
+	if err != nil {
+		return fmt.Errorf("backup created but checksum failed: %w", err)
+	}
+	summary.ChecksumSHA256 = checksum
+
+	remoteEnabled := config.Load().BackupRemoteEnabled
+	recordStorage := storage.NewSQLiteBackupRecordStorage(db.DB)
+	record := buildBackupRecord(summary, zipPath, note, remoteEnabled)
+	if err := recordStorage.Upsert(record); err != nil {
+		return fmt.Errorf("backup created but record persistence failed: %w", err)
+	}
+	if remoteEnabled {
+		go syncScheduledBackupRecord(record, recordStorage)
+	}
+
 	log.Printf("[BackupHandler] Backup created successfully: %s", zipName)
 	return nil
 }
@@ -132,16 +237,13 @@ func NewCleanupBackupHandler(roomStorage storage.RoomStorage) CleanupBackupHandl
 }
 func (h *CleanupBackupHandlerImpl) CleanupOldBackups(roomID int, daysToKeep int) error {
 	log.Printf("[CleanupBackupHandler] Cleaning up backups older than %d days for room %d...", daysToKeep, roomID)
-	backupDir := filepath.Join(config.DataDir, "backups")
-	if roomID > 0 {
-		backupDir = filepath.Join(backupDir, fmt.Sprintf("room-%d", roomID))
-	}
+	backupDir := config.BackupDir
 	if _, err := os.Stat(backupDir); os.IsNotExist(err) {
 		log.Printf("[CleanupBackupHandler] Backup directory does not exist: %s", backupDir)
 		return nil
 	}
 	cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
-	files, err := ioutil.ReadDir(backupDir)
+	files, err := os.ReadDir(backupDir)
 	if err != nil {
 		return fmt.Errorf("failed to read backup directory: %w", err)
 	}
@@ -150,18 +252,30 @@ func (h *CleanupBackupHandlerImpl) CleanupOldBackups(roomID int, daysToKeep int)
 		if file.IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(file.Name(), ".zip") {
+		fileName := file.Name()
+		if !strings.HasSuffix(strings.ToLower(fileName), ".zip") {
 			continue
 		}
-		if file.ModTime().Before(cutoffTime) {
-			filePath := filepath.Join(backupDir, file.Name())
-			if err := os.Remove(filePath); err != nil {
-				log.Printf("[CleanupBackupHandler] Failed to delete backup file %s: %v", filePath, err)
-				continue
-			}
-			log.Printf("[CleanupBackupHandler] Deleted old backup: %s", file.Name())
-			deletedCount++
+		if roomID > 0 && !strings.HasPrefix(fileName, fmt.Sprintf("room-%d_", roomID)) {
+			continue
 		}
+
+		fileInfo, err := file.Info()
+		if err != nil {
+			log.Printf("[CleanupBackupHandler] Failed to stat backup file %s: %v", fileName, err)
+			continue
+		}
+		if !fileInfo.ModTime().Before(cutoffTime) {
+			continue
+		}
+
+		filePath := filepath.Join(backupDir, fileName)
+		if err := os.Remove(filePath); err != nil {
+			log.Printf("[CleanupBackupHandler] Failed to delete backup file %s: %v", filePath, err)
+			continue
+		}
+		log.Printf("[CleanupBackupHandler] Deleted old backup: %s", fileName)
+		deletedCount++
 	}
 	log.Printf("[CleanupBackupHandler] Cleanup completed. Deleted %d old backup files.", deletedCount)
 	return nil

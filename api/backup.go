@@ -268,7 +268,7 @@ func CreateBackup(c *gin.Context) {
 
 	roomStorage := storage.NewSQLiteRoomStorage(db.DB)
 	room, err := roomStorage.GetByID(req.RoomID)
-	if err != nil {
+	if err != nil || room == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("房间不存在"))
 		return
 	}
@@ -415,7 +415,7 @@ func AnalyzeBackup(c *gin.Context) {
 
 	roomStorage := storage.NewSQLiteRoomStorage(db.DB)
 	room, err := roomStorage.GetByID(req.TargetRoomID)
-	if err != nil {
+	if err != nil || room == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("目标房间不存在"))
 		return
 	}
@@ -453,7 +453,7 @@ func RestoreBackup(c *gin.Context) {
 
 	roomStorage := storage.NewSQLiteRoomStorage(db.DB)
 	room, err := roomStorage.GetByID(req.TargetRoomID)
-	if err != nil {
+	if err != nil || room == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("目标房间不存在"))
 		return
 	}
@@ -491,7 +491,7 @@ func RestoreBackup(c *gin.Context) {
 		return
 	}
 
-	if err := extractBackupArchive(backupPath, roomDir); err != nil {
+	if err := restoreBackupArchiveAtomically(backupPath, roomDir); err != nil {
 		log.Printf("[Backup] Failed to restore backup archive: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("恢复备份失败: "+err.Error()))
 		return
@@ -787,6 +787,67 @@ func extractBackupArchive(backupPath string, targetDir string) error {
 		}
 		if closeErr != nil {
 			return closeErr
+		}
+	}
+
+	return nil
+}
+
+func restoreBackupArchiveAtomically(backupPath string, targetDir string) error {
+	parentDir := filepath.Dir(targetDir)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return err
+	}
+
+	tempDir, err := os.MkdirTemp(parentDir, fmt.Sprintf(".restore-%s-", filepath.Base(targetDir)))
+	if err != nil {
+		return err
+	}
+	tempDirActive := true
+	defer func() {
+		if tempDirActive {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+
+	if err := extractBackupArchive(backupPath, tempDir); err != nil {
+		return err
+	}
+
+	tempEntries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return err
+	}
+	if len(tempEntries) == 0 {
+		return fmt.Errorf("备份内容为空，无法恢复")
+	}
+
+	rollbackDir := ""
+	if targetInfo, err := os.Stat(targetDir); err == nil {
+		if !targetInfo.IsDir() {
+			return fmt.Errorf("目标房间路径不是目录")
+		}
+		rollbackDir = filepath.Join(parentDir, fmt.Sprintf(".rollback-%s-%d", filepath.Base(targetDir), time.Now().UnixNano()))
+		if err := os.Rename(targetDir, rollbackDir); err != nil {
+			return fmt.Errorf("暂存旧房间目录失败: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if err := os.Rename(tempDir, targetDir); err != nil {
+		if rollbackDir != "" {
+			if restoreErr := os.Rename(rollbackDir, targetDir); restoreErr != nil {
+				return fmt.Errorf("应用备份失败: %w；回滚旧目录也失败: %v", err, restoreErr)
+			}
+		}
+		return fmt.Errorf("应用备份失败: %w", err)
+	}
+
+	tempDirActive = false
+	if rollbackDir != "" {
+		if err := os.RemoveAll(rollbackDir); err != nil {
+			log.Printf("[Backup] Failed to remove rollback directory %s: %v", rollbackDir, err)
 		}
 	}
 
