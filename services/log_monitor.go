@@ -19,6 +19,7 @@ type LogMonitor struct {
 	statsStorage        storage.PlayerStatsStorage
 	dailyStatsStorage   storage.PlayerDailyStatsStorage
 	playerNameToID      map[string]int
+	pendingPlayerIPs    map[int][]string
 	activeRooms         map[int]bool
 	mu                  sync.RWMutex
 	lastReadPos         map[string]int64
@@ -40,6 +41,7 @@ func NewLogMonitor(
 		statsStorage:      statsStorage,
 		dailyStatsStorage: dailyStatsStorage,
 		playerNameToID:    make(map[string]int),
+		pendingPlayerIPs:  make(map[int][]string),
 		activeRooms:       make(map[int]bool),
 		lastReadPos:       make(map[string]int64),
 		stopChan:          make(chan struct{}),
@@ -141,19 +143,79 @@ func (m *LogMonitor) processRoomLog(room *models.Room) {
 	m.positionMutex.Unlock()
 }
 func (m *LogMonitor) parseLine(line string, roomID int) {
+	normalizedLine := normalizeLogMonitorLine(line)
+
+	connectingPattern := regexp.MustCompile(`([0-9]{1,3}(?:\.[0-9]{1,3}){3}):(\d+)正在连接`)
+	if matches := connectingPattern.FindStringSubmatch(normalizedLine); matches != nil {
+		m.enqueuePendingPlayerIP(roomID, matches[1])
+		return
+	}
+
 	joinPattern := regexp.MustCompile(`:\s*(.+?)\s*\(([0-9.]+):(\d+)\)\s*has joined`)
-	if matches := joinPattern.FindStringSubmatch(line); matches != nil {
+	if matches := joinPattern.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
 		ipAddress := matches[2]
 		m.handlePlayerJoin(playerName, ipAddress, roomID)
 		return
 	}
+
+	chineseJoinPattern := regexp.MustCompile(`^\s*(.+?)已加入。?\s*$`)
+	if matches := chineseJoinPattern.FindStringSubmatch(normalizedLine); matches != nil {
+		playerName := strings.TrimSpace(matches[1])
+		ipAddress := m.dequeuePendingPlayerIP(roomID)
+		m.handlePlayerJoin(playerName, ipAddress, roomID)
+		return
+	}
+
 	leavePattern := regexp.MustCompile(`:\s*(.+?)\s*has left`)
-	if matches := leavePattern.FindStringSubmatch(line); matches != nil {
+	if matches := leavePattern.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
 		m.handlePlayerLeave(playerName, roomID)
 		return
 	}
+
+	chineseLeavePattern := regexp.MustCompile(`^\s*(.+?)已离开。?\s*$`)
+	if matches := chineseLeavePattern.FindStringSubmatch(normalizedLine); matches != nil {
+		playerName := strings.TrimSpace(matches[1])
+		m.handlePlayerLeave(playerName, roomID)
+		return
+	}
+}
+
+func normalizeLogMonitorLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "[STDOUT]")
+	return strings.TrimSpace(trimmed)
+}
+
+func (m *LogMonitor) enqueuePendingPlayerIP(roomID int, ipAddress string) {
+	ipAddress = strings.TrimSpace(ipAddress)
+	if ipAddress == "" {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pendingPlayerIPs[roomID] = append(m.pendingPlayerIPs[roomID], ipAddress)
+}
+
+func (m *LogMonitor) dequeuePendingPlayerIP(roomID int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pending := m.pendingPlayerIPs[roomID]
+	if len(pending) == 0 {
+		return ""
+	}
+
+	ipAddress := pending[0]
+	if len(pending) == 1 {
+		delete(m.pendingPlayerIPs, roomID)
+	} else {
+		m.pendingPlayerIPs[roomID] = pending[1:]
+	}
+
+	return ipAddress
 }
 func (m *LogMonitor) handlePlayerJoin(playerName, ipAddress string, roomID int) {
 	playerID := m.getOrCreatePlayerID(playerName, ipAddress, roomID)
