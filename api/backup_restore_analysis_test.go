@@ -130,6 +130,14 @@ func TestAnalyzeBackupHandlerReportsRestoreEligibilityByRoomStatus(t *testing.T)
 			if payload.Data.CanRestore != tc.wantCanRestore {
 				t.Fatalf("unexpected canRestore: got %v want %v", payload.Data.CanRestore, tc.wantCanRestore)
 			}
+			if tc.wantCanRestore {
+				if payload.Data.FatalIssues == nil {
+					t.Fatalf("expected fatalIssues to encode as an empty array, got nil")
+				}
+				if payload.Data.Warnings == nil {
+					t.Fatalf("expected warnings to encode as an empty array, got nil")
+				}
+			}
 
 			var roomStatusCheck *backupAnalysisCheck
 			for i := range payload.Data.Checks {

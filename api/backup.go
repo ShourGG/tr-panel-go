@@ -673,9 +673,12 @@ func analyzeBackupRestore(backupPath string, targetRoom *models.Room) (backupRes
 	}
 
 	analysis := backupRestoreAnalysis{
-		Backup:     summary,
-		TargetRoom: backupTargetRoomInfo{ID: targetRoom.ID, Name: targetRoom.Name, ServerType: targetRoom.ServerType, WorldFile: targetRoom.WorldFile, Status: targetRoom.Status},
-		CanRestore: true,
+		Backup:      summary,
+		TargetRoom:  backupTargetRoomInfo{ID: targetRoom.ID, Name: targetRoom.Name, ServerType: targetRoom.ServerType, WorldFile: targetRoom.WorldFile, Status: targetRoom.Status},
+		CanRestore:  true,
+		Checks:      []backupAnalysisCheck{},
+		FatalIssues: []string{},
+		Warnings:    []string{},
 	}
 
 	normalizedRoomStatus := strings.ToLower(strings.TrimSpace(targetRoom.Status))
