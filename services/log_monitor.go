@@ -1,4 +1,5 @@
 package services
+
 import (
 	"bufio"
 	"database/sql"
@@ -12,21 +13,23 @@ import (
 	"terraria-panel/storage"
 	"time"
 )
+
 type LogMonitor struct {
-	db                  *sql.DB
-	roomStorage         storage.RoomStorage
-	sessionStorage      storage.PlayerSessionStorage
-	statsStorage        storage.PlayerStatsStorage
-	dailyStatsStorage   storage.PlayerDailyStatsStorage
-	playerNameToID      map[string]int
-	pendingPlayerIPs    map[int][]string
-	activeRooms         map[int]bool
-	mu                  sync.RWMutex
-	lastReadPos         map[string]int64
-	positionMutex       sync.RWMutex
-	stopChan            chan struct{}
-	wg                  sync.WaitGroup
+	db                *sql.DB
+	roomStorage       storage.RoomStorage
+	sessionStorage    storage.PlayerSessionStorage
+	statsStorage      storage.PlayerStatsStorage
+	dailyStatsStorage storage.PlayerDailyStatsStorage
+	playerNameToID    map[string]int
+	pendingPlayerIPs  map[int][]string
+	activeRooms       map[int]bool
+	mu                sync.RWMutex
+	lastReadPos       map[string]int64
+	positionMutex     sync.RWMutex
+	stopChan          chan struct{}
+	wg                sync.WaitGroup
 }
+
 func NewLogMonitor(
 	db *sql.DB,
 	roomStorage storage.RoomStorage,
@@ -48,17 +51,17 @@ func NewLogMonitor(
 	}
 }
 func (m *LogMonitor) Start() {
-	log.Println("📊 Starting log monitor service...")
+	log.Println("Starting log monitor service...")
 	m.loadPlayerNameCache()
 	m.wg.Add(1)
 	go m.monitorLoop()
-	log.Println("✅ Log monitor service started")
+	log.Println("Log monitor service started")
 }
 func (m *LogMonitor) Stop() {
-	log.Println("🛑 Stopping log monitor service...")
+	log.Println("Stopping log monitor service...")
 	close(m.stopChan)
 	m.wg.Wait()
-	log.Println("✅ Log monitor service stopped")
+	log.Println("Log monitor service stopped")
 }
 func (m *LogMonitor) loadPlayerNameCache() {
 	query := `SELECT id, name FROM players`

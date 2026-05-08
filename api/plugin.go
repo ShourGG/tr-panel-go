@@ -292,7 +292,7 @@ func GetPluginStore(c *gin.Context) {
 	if !forceRefresh {
 		plugins, fromCache := getPluginStoreFromCache()
 		if fromCache {
-			fmt.Printf("[Plugin Store] ✅ Serving from cache (%d plugins)\n", len(plugins))
+			fmt.Printf("[Plugin Store] Serving from cache (%d plugins)\n", len(plugins))
 			c.JSON(http.StatusOK, gin.H{
 				"plugins":   plugins,
 				"total":     len(plugins),
@@ -302,15 +302,15 @@ func GetPluginStore(c *gin.Context) {
 			return
 		}
 	}
-	fmt.Println("[Plugin Store] 🔄 Fetching plugin store from GitHub...")
+	fmt.Println("[Plugin Store] Fetching plugin store from GitHub...")
 	plugins, err := fetchPluginStoreFromGitHub()
 	if err != nil {
-		fmt.Printf("[Plugin Store] ❌ Failed to fetch from GitHub: %v\n", err)
+		fmt.Printf("[Plugin Store] Failed to fetch from GitHub: %v\n", err)
 		pluginStoreCacheMutex.RLock()
 		if len(pluginStoreCache) > 0 {
 			plugins := pluginStoreCache
 			pluginStoreCacheMutex.RUnlock()
-			fmt.Printf("[Plugin Store] ⚠️ Using stale cache as fallback (%d plugins)\n", len(plugins))
+			fmt.Printf("[Plugin Store] Using stale cache as fallback (%d plugins)\n", len(plugins))
 			c.JSON(http.StatusOK, gin.H{
 				"plugins":   plugins,
 				"total":     len(plugins),
@@ -323,7 +323,7 @@ func GetPluginStore(c *gin.Context) {
 		}
 		pluginStoreCacheMutex.RUnlock()
 		errorMsg := fmt.Sprintf("Failed to fetch plugin store: %v", err)
-		fmt.Printf("[Plugin Store] 💥 Returning error to client: %s\n", errorMsg)
+		fmt.Printf("[Plugin Store] Returning error to client: %s\n", errorMsg)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":      "Failed to fetch plugin store",
 			"details":    errorMsg,
@@ -332,7 +332,7 @@ func GetPluginStore(c *gin.Context) {
 		return
 	}
 	updatePluginStoreCache(plugins)
-	fmt.Printf("[Plugin Store] ✅ Successfully loaded %d plugins from GitHub\n", len(plugins))
+	fmt.Printf("[Plugin Store] Successfully loaded %d plugins from GitHub\n", len(plugins))
 	c.JSON(http.StatusOK, gin.H{
 		"plugins":   plugins,
 		"total":     len(plugins),
@@ -583,10 +583,10 @@ func fetchPluginStoreFromGitHub() ([]models.PluginStoreItem, error) {
 		fmt.Printf("[Plugin Store] Attempt %d/%d: Trying URL: %s\n", i+1, len(urls), url)
 		plugins, err := fetchPluginStoreFromURL(url)
 		if err == nil {
-			fmt.Printf("[Plugin Store] ✅ Successfully fetched from: %s\n", url)
+			fmt.Printf("[Plugin Store] Successfully fetched from: %s\n", url)
 			return plugins, nil
 		}
-		fmt.Printf("[Plugin Store] ❌ Failed to fetch from %s: %v\n", url, err)
+		fmt.Printf("[Plugin Store] Failed to fetch from %s: %v\n", url, err)
 		lastErr = err
 		if i < len(urls)-1 {
 			time.Sleep(500 * time.Millisecond)

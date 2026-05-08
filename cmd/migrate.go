@@ -1,15 +1,17 @@
 package main
+
 import (
 	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"log"
 	"os"
 	"path/filepath"
 	"terraria-panel/db"
 	"terraria-panel/models"
 	"terraria-panel/storage"
-	"golang.org/x/crypto/bcrypt"
 )
+
 func migrateFromJSON() error {
 	dataDir := filepath.Join(".", "..", "面板泰拉瑞亚情况")
 	dbPath := filepath.Join(dataDir, "panel.db")
@@ -21,7 +23,7 @@ func migrateFromJSON() error {
 	userStorage := storage.NewSQLiteUserStorage(db.DB)
 	roomsFile := filepath.Join(dataDir, "rooms.json")
 	if _, err := os.Stat(roomsFile); err == nil {
-		log.Println("📦 迁移房间数据...")
+		log.Println("迁移房间数据...")
 		data, err := os.ReadFile(roomsFile)
 		if err != nil {
 			return fmt.Errorf("读取 rooms.json 失败: %v", err)
@@ -34,13 +36,13 @@ func migrateFromJSON() error {
 			room.Status = "stopped"
 			room.PID = 0
 			if err := roomStorage.Create(&room); err != nil {
-				log.Printf("⚠️  迁移房间 %s 失败: %v", room.Name, err)
+				log.Printf("迁移房间 %s 失败: %v", room.Name, err)
 			} else {
-				log.Printf("✅ 迁移房间: %s (ID: %d)", room.Name, room.ID)
+				log.Printf("迁移房间完成: %s (ID: %d)", room.Name, room.ID)
 			}
 		}
 	}
-	log.Println("👤 创建默认管理员...")
+	log.Println("创建默认管理员...")
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("q2e4t6u8"), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("密码加密失败: %v", err)
@@ -51,18 +53,18 @@ func migrateFromJSON() error {
 		Role:     "admin",
 	}
 	if err := userStorage.Create(admin); err != nil {
-		log.Printf("⚠️  创建管理员失败（可能已存在）: %v", err)
+		log.Printf("创建管理员失败（可能已存在）: %v", err)
 	} else {
-		log.Printf("✅ 创建管理员: %s", admin.Username)
+		log.Printf("创建管理员完成: %s", admin.Username)
 	}
-	log.Println("🎉 数据迁移完成！")
-	log.Println("📍 数据库位置:", dbPath)
-	log.Println("🔐 管理员账号: shour / q2e4t6u8")
+	log.Println("数据迁移完成")
+	log.Println("数据库位置:", dbPath)
+	log.Println("管理员账号: shour / q2e4t6u8")
 	return nil
 }
 func main() {
-	log.Println("🚀 开始数据迁移...")
+	log.Println("开始数据迁移...")
 	if err := migrateFromJSON(); err != nil {
-		log.Fatalf("❌ 迁移失败: %v", err)
+		log.Fatalf("迁移失败: %v", err)
 	}
 }

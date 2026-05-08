@@ -27,17 +27,17 @@ func DownloadWithRetry(opts DownloadOptions) error {
 	for attempt := 0; attempt <= opts.Retries; attempt++ {
 		for i, url := range urls {
 			if attempt > 0 || i > 0 {
-				fmt.Printf("🔄 Retry attempt %d/%d, trying URL %d/%d\n", attempt+1, opts.Retries, i+1, len(urls))
+				fmt.Printf("Retry attempt %d/%d, trying URL %d/%d\n", attempt+1, opts.Retries, i+1, len(urls))
 				time.Sleep(time.Second * time.Duration(attempt+1))
 			}
-			fmt.Printf("📥 Downloading from: %s\n", url)
+			fmt.Printf("Downloading from: %s\n", url)
 			err := downloadFile(url, opts.FilePath, opts.OnProgress, opts.Timeout)
 			if err == nil {
-				fmt.Printf("✅ Download successful!\n")
+				fmt.Printf("Download successful\n")
 				return nil
 			}
 			lastErr = err
-			fmt.Printf("❌ Download failed: %v\n", err)
+			fmt.Printf("Download failed: %v\n", err)
 		}
 	}
 	return fmt.Errorf("download failed after %d retries: %v", opts.Retries, lastErr)
@@ -85,7 +85,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	totalSize := resp.ContentLength
 	if totalSize > 0 {
-		fmt.Printf("📦 File size: %.2f MB\n", float64(totalSize)/1024/1024)
+		fmt.Printf("File size: %.2f MB\n", float64(totalSize)/1024/1024)
 	}
 	out, err := os.Create(filepath)
 	if err != nil {
@@ -115,7 +115,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 					}
 					elapsed := time.Since(startTime).Seconds()
 					speed := float64(downloaded) / elapsed / 1024 / 1024
-					fmt.Printf("📊 Progress: %d%% (%.2f/%.2f MB) Speed: %.2f MB/s\n",
+					fmt.Printf("Progress: %d%% (%.2f/%.2f MB) Speed: %.2f MB/s\n",
 						percent,
 						float64(downloaded)/1024/1024,
 						float64(totalSize)/1024/1024,
@@ -138,7 +138,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 					}
 					elapsed := time.Since(startTime).Seconds()
 					speed := float64(downloaded) / elapsed / 1024 / 1024
-					fmt.Printf("📥 Downloaded: %.2f MB (virtual progress: %d%%) Speed: %.2f MB/s\n",
+					fmt.Printf("Downloaded: %.2f MB (virtual progress: %d%%) Speed: %.2f MB/s\n",
 						float64(downloaded)/1024/1024,
 						virtualPercent,
 						speed)
@@ -157,7 +157,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 	}
 	elapsed := time.Since(startTime).Seconds()
 	avgSpeed := float64(downloaded) / elapsed / 1024 / 1024
-	fmt.Printf("✅ Download complete! Total: %.2f MB, Time: %.1fs, Avg Speed: %.2f MB/s\n",
+	fmt.Printf("Download complete. Total: %.2f MB, Time: %.1fs, Avg Speed: %.2f MB/s\n",
 		float64(downloaded)/1024/1024, elapsed, avgSpeed)
 	if err := validateDownloadedFile(filepath, contentType); err != nil {
 		_ = os.Remove(filepath)

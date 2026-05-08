@@ -110,10 +110,10 @@ select_update_channel() {
     echo ""
     echo -e "${BLUE}========== 切换更新通道 ==========${NC}"
     if [ "$UPDATE_CHANNEL" = "dev" ]; then
-        echo -e "  ${GREEN}[1] 开发板 dev  ← 当前${NC}"
+        echo -e "  ${GREEN}[1] 开发板 dev  (当前)${NC}"
         echo "  [0] 正式版 stable"
     else
-        echo -e "  ${GREEN}[0] 正式版 stable  ← 当前${NC}"
+        echo -e "  ${GREEN}[0] 正式版 stable  (当前)${NC}"
         echo "  [1] 开发板 dev"
     fi
     echo ""
@@ -151,7 +151,7 @@ select_mirror() {
     for m in "${MIRRORS[@]}"; do
         local name=$(echo "$m" | cut -d'|' -f1)
         if [ $i -eq $MIRROR_IDX ]; then
-            echo -e "  ${GREEN}[$i] $name  ← 当前${NC}"
+            echo -e "  ${GREEN}[$i] $name  (当前)${NC}"
         else
             echo "  [$i] $name"
         fi
@@ -258,7 +258,7 @@ check_script_update() {
     # 比较版本
     if version_gt "$REMOTE_VERSION" "$SCRIPT_VERSION"; then
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${YELLOW}  发现新版本！${NC}"
+        echo -e "${YELLOW}  发现新版本${NC}"
         echo -e "${YELLOW}  当前版本: ${SCRIPT_VERSION}${NC}"
         echo -e "${YELLOW}  最新版本: ${REMOTE_VERSION}${NC}"
         echo -e "${YELLOW}  建议选择 [6] 更新脚本${NC}"
@@ -274,9 +274,9 @@ show_menu() {
     
     # 检查服务状态
     if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
-        STATUS="${GREEN}● 运行中${NC}"
+        STATUS="${GREEN}[运行中]${NC}"
     else
-        STATUS="${RED}○ 已停止${NC}"
+        STATUS="${RED}[已停止]${NC}"
     fi
     
     echo "========================================="
@@ -380,7 +380,7 @@ EOF
 
     echo ""
     echo -e "${GREEN}=========================================${NC}"
-    echo -e "${GREEN}  安装完成！${NC}"
+    echo -e "${GREEN}  安装完成${NC}"
     echo -e "${GREEN}=========================================${NC}"
     echo ""
     PUBLIC_IP=$(timeout 3 curl -s --max-time 3 ifconfig.me 2>/dev/null || timeout 3 curl -s --max-time 3 ip.sb 2>/dev/null)
@@ -449,7 +449,7 @@ update_panel() {
         chmod +x tr-panel
         rm -f tr-panel.bak
         systemctl start $SERVICE_NAME
-        echo -e "${GREEN}更新完成！当前版本: ${VERSION}${NC}"
+        echo -e "${GREEN}更新完成，当前版本: ${VERSION}${NC}"
     else
         # 回滚
         rm -f tr-panel.new

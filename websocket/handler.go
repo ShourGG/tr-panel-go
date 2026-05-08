@@ -50,7 +50,7 @@ func BroadcastMessage(data []byte) {
 	case broadcast <- data:
 		log.Println("[WebSocket] 消息已放入广播队列")
 	default:
-		log.Println("[WebSocket] ⚠️ 广播通道已满，消息被丢弃")
+		log.Println("[WebSocket] 广播通道已满，消息被丢弃")
 	}
 }
 
@@ -112,7 +112,7 @@ func HandleWebSocket(c *gin.Context) {
 	log.Println("WebSocket客户端连接成功")
 	welcomeMsg := map[string]interface{}{
 		"type":    "connected",
-		"message": "🎮 连接成功！实时日志已启动",
+		"message": "连接成功，实时日志已启动",
 		"time":    time.Now().Format("2006-01-02 15:04:05"),
 	}
 	data, _ := json.Marshal(welcomeMsg)
@@ -252,7 +252,7 @@ func HandleRoomLogs(c *gin.Context) {
 	log.Printf("[WebSocket] Client connected to room %d logs", roomID)
 	welcomeMsg := map[string]interface{}{
 		"type":    "connected",
-		"message": fmt.Sprintf("🎮 已连接到房间 %d 的日志流", roomID),
+		"message": fmt.Sprintf("已连接到房间 %d 的日志流", roomID),
 		"time":    time.Now().Format("2006-01-02 15:04:05"),
 	}
 	data, _ := json.Marshal(welcomeMsg)
@@ -290,7 +290,7 @@ func queueLogClientMessage(c *LogClient, payload map[string]interface{}) {
 func waitForLogFile(c *LogClient, logFile string) bool {
 	queueLogClientMessage(c, map[string]interface{}{
 		"type":    "info",
-		"message": "⏳ 等待服务器启动并生成日志文件...",
+		"message": "等待服务器启动并生成日志文件...",
 		"time":    time.Now().Format("15:04:05"),
 	})
 
@@ -301,7 +301,7 @@ func waitForLogFile(c *LogClient, logFile string) bool {
 		if _, err := os.Stat(logFile); err == nil {
 			queueLogClientMessage(c, map[string]interface{}{
 				"type":    "info",
-				"message": "✅ 已检测到日志文件，开始读取日志...",
+				"message": "已检测到日志文件，开始读取日志...",
 				"time":    time.Now().Format("15:04:05"),
 			})
 			return true
@@ -406,7 +406,7 @@ func (c *LogClient) tailLogs() {
 		log.Printf("[WebSocket] Failed to tail log file: %v", err)
 		queueLogClientMessage(c, map[string]interface{}{
 			"type":    "error",
-			"message": fmt.Sprintf("❌ 无法读取日志文件: %v", err),
+			"message": fmt.Sprintf("无法读取日志文件: %v", err),
 			"time":    time.Now().Format("15:04:05"),
 		})
 		return
@@ -416,7 +416,7 @@ func (c *LogClient) tailLogs() {
 	c.mu.Unlock()
 	queueLogClientMessage(c, map[string]interface{}{
 		"type":    "info",
-		"message": "✅ 开始实时推送日志...",
+		"message": "开始实时推送日志...",
 		"time":    time.Now().Format("15:04:05"),
 	})
 	for line := range t.Lines {
@@ -461,7 +461,7 @@ func (c *LogClient) sendHistoryLogs(logFile string) {
 	}
 	queueLogClientMessage(c, map[string]interface{}{
 		"type":    "info",
-		"message": fmt.Sprintf("📜 加载最近 %d 条历史日志", len(lines)),
+		"message": fmt.Sprintf("加载最近 %d 条历史日志", len(lines)),
 		"time":    time.Now().Format("15:04:05"),
 	})
 	for _, line := range lines {
@@ -492,7 +492,7 @@ func HandleServerLogs(c *gin.Context) {
 
 	welcomeMsg := map[string]interface{}{
 		"type":    "connected",
-		"message": "🎮 已连接到全局服务器日志流",
+		"message": "已连接到全局服务器日志流",
 		"time":    time.Now().Format("2006-01-02 15:04:05"),
 	}
 	data, _ := json.Marshal(welcomeMsg)
@@ -617,7 +617,7 @@ func HandleServerLogs(c *gin.Context) {
 				waitingAnnounced = true
 				queueServerMessage(map[string]interface{}{
 					"type":    "info",
-					"message": "⏳ 暂无房间日志文件，请先启动至少一个房间",
+					"message": "暂无房间日志文件，请先启动至少一个房间",
 					"time":    time.Now().Format("15:04:05"),
 				})
 			}
@@ -628,7 +628,7 @@ func HandleServerLogs(c *gin.Context) {
 			waitingAnnounced = false
 			queueServerMessage(map[string]interface{}{
 				"type":    "info",
-				"message": fmt.Sprintf("✅ 已检测到 %d 个房间日志文件，开始实时监听", len(roomFiles)),
+				"message": fmt.Sprintf("已检测到 %d 个房间日志文件，开始实时监听", len(roomFiles)),
 				"time":    time.Now().Format("15:04:05"),
 			})
 		}

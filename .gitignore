@@ -3,6 +3,12 @@ dist/
 *.exe
 terraria-panel
 
+# Go embed / legacy frontend bundles are versioned artifacts.
+!web/dist/
+!web/dist/**
+!frontend/dist/
+!frontend/dist/**
+
 # 开发环境
 .env
 .vscode/

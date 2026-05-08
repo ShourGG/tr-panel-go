@@ -31,12 +31,12 @@ func Init(dbPath string) error {
 		return err
 	}
 	if err := migrateDatabase(); err != nil {
-		log.Printf("⚠️ 数据库迁移警告: %v", err)
+		log.Printf("数据库迁移警告: %v", err)
 	}
 	if err := applyPerformanceIndexes(); err != nil {
-		log.Printf("⚠️ 性能索引创建警告: %v", err)
+		log.Printf("性能索引创建警告: %v", err)
 	}
-	log.Println("✅ 数据库初始化成功:", dbPath)
+	log.Println("数据库初始化成功:", dbPath)
 	return nil
 }
 func migrateDatabase() error {
@@ -58,15 +58,15 @@ func migrateDatabase() error {
 		}
 	}
 	if err := ensurePluginServerTable(); err != nil {
-		log.Printf("⚠️ 插件服表迁移失败: %v", err)
+		log.Printf("插件服表迁移失败: %v", err)
 	}
 	if err := addServerModeColumn(); err != nil {
-		log.Printf("⚠️ server_mode 字段添加失败: %v", err)
+		log.Printf("server_mode 字段添加失败: %v", err)
 	}
 	if err := addCustomUIDColumn(); err != nil {
-		log.Printf("⚠️ custom_uid 字段添加失败: %v", err)
+		log.Printf("custom_uid 字段添加失败: %v", err)
 	}
-	log.Println("✅ 数据库迁移检查完成")
+	log.Println("数据库迁移检查完成")
 	return nil
 }
 func addServerModeColumn() error {
@@ -74,7 +74,7 @@ func addServerModeColumn() error {
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return err
 	}
-	log.Println("✅ users.server_mode 字段检查完成")
+	log.Println("users.server_mode 字段检查完成")
 	return nil
 }
 
@@ -89,7 +89,7 @@ func addCustomUIDColumn() error {
 	if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_custom_uid_unique ON users(custom_uid) WHERE custom_uid <> ''"); err != nil {
 		return err
 	}
-	log.Println("✅ users.custom_uid 字段检查完成")
+	log.Println("users.custom_uid 字段检查完成")
 	return nil
 }
 
@@ -97,7 +97,7 @@ func ensurePluginServerTable() error {
 	var tableName string
 	err := DB.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_server'").Scan(&tableName)
 	if err == sql.ErrNoRows {
-		log.Println("📦 创建 plugin_server 表...")
+		log.Println("创建 plugin_server 表...")
 		createTableSQL := `
 			CREATE TABLE IF NOT EXISTS plugin_server (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -123,9 +123,9 @@ func ensurePluginServerTable() error {
 		if _, err := DB.Exec(createTableSQL); err != nil {
 			return err
 		}
-		log.Println("✅ plugin_server 表创建成功")
+		log.Println("plugin_server 表创建成功")
 	} else {
-		log.Println("📦 检查 plugin_server 表字段...")
+		log.Println("检查 plugin_server 表字段...")
 		addColumnIfNotExists("plugin_server", "world_size", "INTEGER DEFAULT 2")
 		addColumnIfNotExists("plugin_server", "world_name", "TEXT DEFAULT 'Plugin Test World'")
 		addColumnIfNotExists("plugin_server", "difficulty", "INTEGER DEFAULT 0")
@@ -139,7 +139,7 @@ func ensurePluginServerTable() error {
 		return err
 	}
 	if count == 0 {
-		log.Println("📦 插入默认插件服配置...")
+		log.Println("插入默认插件服配置...")
 		insertSQL := `
 			INSERT INTO plugin_server (
 				id, name, port, world_file,
@@ -155,7 +155,7 @@ func ensurePluginServerTable() error {
 		if _, err := DB.Exec(insertSQL); err != nil {
 			return err
 		}
-		log.Println("✅ 默认插件服配置插入成功")
+		log.Println("默认插件服配置插入成功")
 	}
 	return nil
 }
@@ -166,9 +166,9 @@ func addColumnIfNotExists(tableName, columnName, columnDef string) {
 	if err != nil || count == 0 {
 		alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, columnName, columnDef)
 		if _, err := DB.Exec(alterSQL); err != nil {
-			log.Printf("⚠️  添加字段 %s.%s 失败: %v", tableName, columnName, err)
+			log.Printf("添加字段 %s.%s 失败: %v", tableName, columnName, err)
 		} else {
-			log.Printf("✅ 添加字段 %s.%s 成功", tableName, columnName)
+			log.Printf("添加字段 %s.%s 成功", tableName, columnName)
 		}
 	}
 }
@@ -182,10 +182,10 @@ func applyPerformanceIndexes() error {
 	}
 	for _, indexSQL := range indexes {
 		if _, err := DB.Exec(indexSQL); err != nil {
-			log.Printf("⚠️ 索引创建失败: %v", err)
+			log.Printf("索引创建失败: %v", err)
 		}
 	}
-	log.Println("✅ 性能索引创建完成")
+	log.Println("性能索引创建完成")
 	return nil
 }
 

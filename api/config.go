@@ -30,7 +30,7 @@ func InitializePluginServerConfig(c *gin.Context) {
 	if configService.CheckConfigExists() {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "配置文件已存在，无需初始化",
+			"error":   "配置文件已存在，不需要初始化",
 		})
 		return
 	}

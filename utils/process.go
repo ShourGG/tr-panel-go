@@ -1,7 +1,9 @@
 package utils
+
 import (
 	"bufio"
 	"fmt"
+	"github.com/creack/pty"
 	"io"
 	"log"
 	"os"
@@ -11,26 +13,28 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"github.com/creack/pty"
 )
+
 type Process struct {
-	cmd        *exec.Cmd
-	pid        int
-	stdin      io.WriteCloser
-	ptyFile    *os.File
-	usePTY     bool
-	serverType string
-	roomID     int
-	mu         sync.Mutex
-	logWriter  io.Writer
-	outputBuffer []string
-	bufferMu     sync.RWMutex
+	cmd            *exec.Cmd
+	pid            int
+	stdin          io.WriteCloser
+	ptyFile        *os.File
+	usePTY         bool
+	serverType     string
+	roomID         int
+	mu             sync.Mutex
+	logWriter      io.Writer
+	outputBuffer   []string
+	bufferMu       sync.RWMutex
 	maxBufferLines int
 }
+
 var (
 	processes = make(map[int]*Process)
 	processMu sync.RWMutex
 )
+
 func StartProcess(roomID int, command string, args []string, workDir string, envVars map[string]string, logWriter io.Writer, serverType string) (*Process, error) {
 	processMu.Lock()
 	defer processMu.Unlock()
@@ -150,8 +154,10 @@ func (p *Process) readPTYOutput() {
 		}
 	}
 }
+
 var BroadcastPluginServerLog func(string) = func(msg string) {
 }
+
 func (p *Process) addToBuffer(output string) {
 	p.bufferMu.Lock()
 	defer p.bufferMu.Unlock()
@@ -230,12 +236,12 @@ func (p *Process) Stop() error {
 		return fmt.Errorf("进程未运行")
 	}
 	pid := p.cmd.Process.Pid
-	fmt.Printf("[INFO] ========== 开始优雅关闭进程 ==========\n")
+	fmt.Printf("[INFO] ========== 开始正常关闭进程 ==========\n")
 	fmt.Printf("[INFO] 进程 PID: %d\n", pid)
 	fmt.Printf("[INFO] 服务器类型: %s\n", p.serverType)
 	if p.serverType == "tshock" {
-		fmt.Println("[INFO] TShock 服务器使用 SIGTERM 信号优雅关闭")
-		fmt.Println("[INFO] TShock 会自动保存世界并优雅退出")
+		fmt.Println("[INFO] TShock 服务器使用 SIGTERM 信号正常关闭")
+		fmt.Println("[INFO] TShock 会自动保存世界并退出")
 		if p.usePTY && p.ptyFile != nil {
 			p.ptyFile.Close()
 		} else if p.stdin != nil {
@@ -246,7 +252,7 @@ func (p *Process) Stop() error {
 			fmt.Printf("[WARN] 尝试强制关闭进程...\n")
 			return p.cmd.Process.Kill()
 		}
-		fmt.Println("[INFO] SIGTERM 信号已发送，等待服务器优雅退出（10秒）...")
+		fmt.Println("[INFO] SIGTERM 信号已发送，等待服务器正常退出（10秒）...")
 		done := make(chan error, 1)
 		go func() {
 			done <- p.cmd.Wait()
@@ -258,7 +264,7 @@ func (p *Process) Stop() error {
 			}
 			for i := 0; i < 3; i++ {
 				if err := p.cmd.Process.Signal(syscall.Signal(0)); err != nil {
-					fmt.Printf("[SUCCESS] ✅ TShock 服务器已优雅退出 (PID: %d)\n", pid)
+					fmt.Printf("[SUCCESS] TShock 服务器已正常退出 (PID: %d)\n", pid)
 					return nil
 				}
 				if i < 2 {
@@ -266,7 +272,7 @@ func (p *Process) Stop() error {
 					time.Sleep(1 * time.Second)
 				}
 			}
-			fmt.Printf("[ERROR] ❌ 进程 %d 仍在运行，Wait() 返回但进程未退出！\n", pid)
+			fmt.Printf("[ERROR] 进程 %d 仍在运行，Wait() 返回但进程未退出\n", pid)
 			fmt.Printf("[WARN] 强制终止进程 (SIGKILL)...\n")
 			if err := p.cmd.Process.Kill(); err != nil {
 				fmt.Printf("[ERROR] SIGKILL 失败: %v\n", err)
@@ -276,7 +282,7 @@ func (p *Process) Stop() error {
 			if err := p.cmd.Process.Signal(syscall.Signal(0)); err == nil {
 				return fmt.Errorf("进程 %d 无法终止", pid)
 			}
-			fmt.Printf("[SUCCESS] ✅ 进程 %d 已强制终止\n", pid)
+			fmt.Printf("[SUCCESS] 进程 %d 已强制终止\n", pid)
 			return nil
 		case <-time.After(10 * time.Second):
 			if err := p.cmd.Process.Signal(syscall.Signal(0)); err == nil {
@@ -289,7 +295,7 @@ func (p *Process) Stop() error {
 				if err := p.cmd.Process.Signal(syscall.Signal(0)); err == nil {
 					return fmt.Errorf("进程 %d 无法终止", pid)
 				}
-				fmt.Printf("[SUCCESS] ✅ 进程 %d 已强制终止\n", pid)
+				fmt.Printf("[SUCCESS] 进程 %d 已强制终止\n", pid)
 				return nil
 			}
 			fmt.Printf("[INFO] 进程 %d 已退出\n", pid)
@@ -326,7 +332,7 @@ func (p *Process) Stop() error {
 		} else {
 			fmt.Println("[SUCCESS] stdin 管道已关闭")
 		}
-		fmt.Println("[INFO] 等待服务器优雅退出（5秒）...")
+		fmt.Println("[INFO] 等待服务器正常退出（5秒）...")
 		done := make(chan error, 1)
 		go func() {
 			done <- p.cmd.Wait()

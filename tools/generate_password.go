@@ -1,9 +1,11 @@
 package main
+
 import (
 	"fmt"
-	"log"
 	"golang.org/x/crypto/bcrypt"
+	"log"
 )
+
 func main() {
 	password := "q2e4t6u8"
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -14,8 +16,8 @@ func main() {
 	fmt.Printf("bcrypt 哈希: %s\n", string(hash))
 	err = bcrypt.CompareHashAndPassword(hash, []byte(password))
 	if err == nil {
-		fmt.Println("✅ 验证成功！")
+		fmt.Println("验证成功")
 	} else {
-		fmt.Println("❌ 验证失败！")
+		fmt.Println("验证失败")
 	}
 }

@@ -6,7 +6,7 @@
 
 **轻量、高性能的泰拉瑞亚服务器管理面板**
 
-*基于 Go 构建 · 单文件部署 · 开箱即用*
+*基于 Go 构建 · 单文件部署 · 面向自部署*
 
 <br/>
 
@@ -31,7 +31,7 @@
 
 ## 项目简介
 
-**TR Panel Go** 是一款专为泰拉瑞亚游戏服务器设计的 Web 管理面板，提供直观的可视化界面与强大的后端支撑。
+**TR Panel Go** 是一款专为泰拉瑞亚游戏服务器设计的 Web 管理面板，提供可视化界面和 Go 后端服务。
 
 - **高性能**：Go 原生并发，API 响应 ~100ms，页面加载 ~78ms
 - **零依赖部署**：前端静态资源内嵌进单一可执行文件，`wget` 即装即用
@@ -45,13 +45,13 @@
 
 > **系统要求：** Ubuntu 24.04+（低版本可能出现 GLIBC 兼容性报错）
 
-**一键安装（wget）**
+**快速安装（wget）**
 
 ```bash
 wget -O tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
 ```
 
-**一键安装（curl）**
+**快速安装（curl）**
 
 ```bash
 curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh && chmod +x tr.sh && ./tr.sh
@@ -103,7 +103,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 ### 系统功能
 - 在线文件管理器（上传 / 下载 / 编辑 / 删除）
-- 自动备份与一键恢复
+- 自动备份与恢复
 - 定时任务调度（cron 表达式）
 - CPU / 内存 / 磁盘 / 网络实时监控图表
 
@@ -203,7 +203,7 @@ location /__downloads/data/ {
 
 由 **[ShourGG](https://github.com/ShourGG)** 独立开发与维护。
 
-如果这个项目对你有帮助，欢迎点个 Star 支持一下！
+如果这个项目对你有帮助，欢迎点个 Star 支持。
 
 ---
 

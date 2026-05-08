@@ -122,7 +122,7 @@ func CheckSteamCMD(c *gin.Context) {
 }
 func InstallDepsAPI(c *gin.Context) {
 	if runtime.GOOS != "linux" {
-		c.JSON(http.StatusOK, models.MessageResponse("非 Linux 系统，无需安装依赖"))
+		c.JSON(http.StatusOK, models.MessageResponse("非 Linux 系统，不需要安装依赖"))
 		return
 	}
 
@@ -214,7 +214,7 @@ func InstallSteamCMDAPI(c *gin.Context) {
 		return
 	}
 	log.Printf("SteamCMD 安装成功")
-	c.JSON(http.StatusOK, models.MessageResponse("SteamCMD 安装成功！现在可以下载创意工坊模组了"))
+	c.JSON(http.StatusOK, models.MessageResponse("SteamCMD 安装成功，现在可以下载创意工坊模组了"))
 }
 func GetSteamCMDStatus(c *gin.Context) {
 	steamcmdDir, steamcmdPath, runtimePath := getSteamCMDPaths()

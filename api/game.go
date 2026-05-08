@@ -1108,8 +1108,8 @@ func installGameServer(gameType string, selectedVersionCode ...string) {
 			}
 		}
 	}
-	sendProgress("安装完成！", 100)
-	fmt.Printf("%s 安装完成！\n", gameType)
+	sendProgress("安装完成", 100)
+	fmt.Printf("%s 安装完成\n", gameType)
 	completeMsg := map[string]interface{}{
 		"type":     "install_complete",
 		"gameType": gameType,
@@ -1203,7 +1203,7 @@ func updateGameServer(gameType string, createBackup bool) {
 		return
 	}
 
-	sendProgress("更新完成！", 100)
+	sendProgress("更新完成", 100)
 	sendUpdateComplete(gameType, "更新成功完成")
 }
 
@@ -1222,8 +1222,8 @@ func repairGameRuntime(gameType string, continueInstall bool) {
 
 	health := assessDotNetRuntimeHealth(targetRuntime)
 	if !health.NeedsRepair {
-		sendProgress(fmt.Sprintf(".NET %s 环境正常，无需修复", targetRuntime), 100)
-		sendRepairComplete(gameType, "当前 .NET 环境正常，无需修复", continueInstall)
+		sendProgress(fmt.Sprintf(".NET %s 环境正常，不需要修复", targetRuntime), 100)
+		sendRepairComplete(gameType, "当前 .NET 环境正常，不需要修复", continueInstall)
 		if continueInstall {
 			installGameServer(gameType)
 		}
@@ -2359,14 +2359,14 @@ func uninstallTShockKeepData(targetDir string) error {
 			return fmt.Errorf("备份 %s 失败: %v", srcPath, err)
 		}
 		backupCount++
-		fmt.Printf("[备份] ✓ %s\n", srcPath)
+		fmt.Printf("[备份] 已复制: %s\n", srcPath)
 	}
 	fmt.Printf("[备份] 完成，共备份 %d 项\n", backupCount)
 	fmt.Println("[删除] 删除旧版本...")
 	if err := os.RemoveAll(targetDir); err != nil {
 		return fmt.Errorf("删除目录失败: %v", err)
 	}
-	fmt.Println("[删除] ✓ 旧版本已删除")
+	fmt.Println("[删除] 旧版本已删除")
 	fmt.Println("[恢复] 重建目录结构...")
 	dirsToCreate := []string{
 		targetDir,
@@ -2378,7 +2378,7 @@ func uninstallTShockKeepData(targetDir string) error {
 			return fmt.Errorf("创建目录 %s 失败: %v", dir, err)
 		}
 	}
-	fmt.Println("[恢复] ✓ 目录结构已重建")
+	fmt.Println("[恢复] 目录结构已重建")
 	fmt.Println("[恢复] 恢复数据...")
 	restoreCount := 0
 	err := filepath.Walk(tempBackup, func(path string, info os.FileInfo, err error) error {
@@ -2406,14 +2406,14 @@ func uninstallTShockKeepData(targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("恢复数据失败: %v", err)
 	}
-	fmt.Printf("[恢复] ✓ 完成，共恢复 %d 个文件\n", restoreCount)
+	fmt.Printf("[恢复] 完成，共恢复 %d 个文件\n", restoreCount)
 	versionFile := filepath.Join(targetDir, ".tshock_version")
 	if err := os.Remove(versionFile); err != nil && !os.IsNotExist(err) {
 		fmt.Printf("[警告] 删除版本标记文件失败: %v\n", err)
 	} else {
-		fmt.Println("[清理] ✓ 已删除版本标记文件")
+		fmt.Println("[清理] 已删除版本标记文件")
 	}
-	fmt.Println("[保留数据卸载] ✓ 完成！插件、配置、数据库已保留")
+	fmt.Println("[保留数据卸载] 完成，插件、配置、数据库已保留")
 	return nil
 }
 func copyRecursive(src, dst string) error {
@@ -2465,7 +2465,7 @@ func assessDotNetRuntimeHealth(runtimeVersion string) DotNetRuntimeHealth {
 	health := DotNetRuntimeHealth{
 		Healthy:          true,
 		RuntimeVersion:   runtimeVersion,
-		RepairSuggestion: "点击面板中的“一键修复 .NET 环境”即可自动清理混装并重装运行时。",
+		RepairSuggestion: "点击面板中的“修复 .NET 环境”即可清理混装并重装运行时。",
 	}
 
 	dotnetPath, err := exec.LookPath("dotnet")
@@ -2535,8 +2535,8 @@ func installDotNetRuntime(gameType, runtimeVersion string) error {
 	}
 	hasRuntime, runtimesOutput, err := checkSpecificDotNetRuntime(runtimeVersion)
 	if err == nil && hasRuntime {
-		fmt.Printf("[.NET %s] ✓ 已安装，跳过\n", runtimeVersion)
-		sendInstallProgress(gameType, fmt.Sprintf("✓ 已安装 .NET %s", runtimeVersion), 93)
+		fmt.Printf("[.NET %s] 已安装，跳过\n", runtimeVersion)
+		sendInstallProgress(gameType, fmt.Sprintf("已安装 .NET %s", runtimeVersion), 93)
 		return nil
 	}
 
@@ -2591,8 +2591,8 @@ func installDotNetRuntime(gameType, runtimeVersion string) error {
 			runtimeVersion, systemLabel, repoName, strings.TrimSpace(runtimesOutput), buildManualDotNetInstallCommand(runtimeVersion, repoName))
 	}
 
-	fmt.Printf("[.NET %s] ✓ 安装成功\n", runtimeVersion)
-	sendInstallProgress(gameType, fmt.Sprintf("✓ .NET %s 安装成功", runtimeVersion), 93)
+	fmt.Printf("[.NET %s] 安装成功\n", runtimeVersion)
+	sendInstallProgress(gameType, fmt.Sprintf(".NET %s 安装成功", runtimeVersion), 93)
 	return nil
 }
 

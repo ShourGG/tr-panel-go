@@ -674,14 +674,14 @@ seed=
 			if !hasNet6 {
 				installedRuntimes, _ := utils.GetInstalledDotNetRuntimes()
 				installCommands, _ := utils.GetDotNet6InstallCommand()
-				errMsg := fmt.Sprintf(`❌ TShock 启动失败：缺少 .NET 6.0 Runtime
-📊 当前系统已安装的 .NET Runtime：
+				errMsg := fmt.Sprintf(`TShock 启动失败：缺少 .NET 6.0 Runtime
+当前系统已安装的 .NET Runtime：
 %s
-⚠️ TShock 5.x 需要 .NET 6.0 Runtime，但系统未安装此版本
-💡 解决方案：
+TShock 5.x 需要 .NET 6.0 Runtime，但系统未安装此版本
+解决方案：
 %s
 安装完成后，请重新启动房间。
-📚 参考文档：https://dotnet.microsoft.com/download/dotnet/6.0`,
+参考文档：https://dotnet.microsoft.com/download/dotnet/6.0`,
 					formatRuntimeList(installedRuntimes),
 					strings.Join(installCommands, "\n"))
 				log.Printf("[ERROR] %s", errMsg)
@@ -1026,7 +1026,7 @@ func applyModConfigToRoom(roomID int, modProfileID string, roomDir string) error
 	if err := os.WriteFile(enabledJsonPath, enabledJsonContent, 0644); err != nil {
 		return fmt.Errorf("写入 enabled.json 失败: %v", err)
 	}
-	log.Printf("[INFO] ✅ enabled.json 已生成，包含 %d 个模组", len(enabledMods))
+	log.Printf("[INFO] enabled.json 已生成，包含 %d 个模组", len(enabledMods))
 	log.Printf("[INFO] 文件路径: %s", enabledJsonPath)
 	return nil
 }
@@ -1094,7 +1094,7 @@ func captureWorldGenerationProgress(roomID int, logFilePath string, serverType s
 					"type":     "world_generation_progress",
 					"roomId":   roomID,
 					"progress": progressText,
-					"message":  fmt.Sprintf("🌍 %s...", progressText),
+					"message":  fmt.Sprintf("%s...", progressText),
 				}
 				if jsonData, err := json.Marshal(progressMsg); err == nil {
 					BroadcastMessage(jsonData)
@@ -1111,7 +1111,7 @@ func captureWorldGenerationProgress(roomID int, logFilePath string, serverType s
 				"type":     "world_generation_progress",
 				"roomId":   roomID,
 				"progress": "服务器启动完成",
-				"message":  "🌍 世界准备完成，服务器可连接",
+				"message":  "世界准备完成，服务器可连接",
 			}
 			if jsonData, err := json.Marshal(progressMsg); err == nil {
 				BroadcastMessage(jsonData)
@@ -1178,7 +1178,7 @@ func captureAdminToken(roomID int, logFilePath string) {
 				if err := roomStorage.UpdateAdminToken(roomID, token); err != nil {
 					log.Printf("[ERROR] 保存管理员令牌失败 (房间 %d): %v", roomID, err)
 				} else {
-					log.Printf("[SUCCESS] ✅ 管理员令牌已保存到数据库 (房间 %d)", roomID)
+					log.Printf("[SUCCESS] 管理员令牌已保存到数据库 (房间 %d)", roomID)
 					tokenFound = true
 					break
 				}
@@ -1219,7 +1219,7 @@ func DeleteAdminToken(c *gin.Context) {
 		if err := os.Remove(setupCodePath); err != nil {
 			log.Printf("[ERROR] 删除 setup-code.txt 失败: %v", err)
 		} else {
-			log.Printf("[SUCCESS] ✅ 已删除 setup-code.txt")
+			log.Printf("[SUCCESS] 已删除 setup-code.txt")
 			deleted = true
 			deletedFiles = append(deletedFiles, "setup-code.txt")
 		}
@@ -1228,7 +1228,7 @@ func DeleteAdminToken(c *gin.Context) {
 		if err := os.Remove(authCodePath); err != nil {
 			log.Printf("[ERROR] 删除 authcode.txt 失败: %v", err)
 		} else {
-			log.Printf("[SUCCESS] ✅ 已删除 authcode.txt")
+			log.Printf("[SUCCESS] 已删除 authcode.txt")
 			deleted = true
 			deletedFiles = append(deletedFiles, "authcode.txt")
 		}

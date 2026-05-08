@@ -662,7 +662,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.5.1-dev.3"
+	return "1.5.1-dev.4"
 }
 
 func normalizeUpdateChannel(channel string) string {
@@ -1005,7 +1005,7 @@ func SelfUpgrade(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
 		"upgraded":   true,
-		"message":    fmt.Sprintf("升级成功 %s → %s，正在重启服务...", currentVersion, latestVersion),
+		"message":    fmt.Sprintf("升级成功 %s -> %s，正在重启服务...", currentVersion, latestVersion),
 		"oldVersion": currentVersion,
 		"newVersion": latestVersion,
 	})
