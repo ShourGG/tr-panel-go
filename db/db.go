@@ -66,6 +66,9 @@ func migrateDatabase() error {
 	if err := addCustomUIDColumn(); err != nil {
 		log.Printf("custom_uid 字段添加失败: %v", err)
 	}
+	if err := normalizeEmptyRoomWorldFiles(); err != nil {
+		log.Printf("房间世界文件补全失败: %v", err)
+	}
 	log.Println("数据库迁移检查完成")
 	return nil
 }
@@ -91,6 +94,19 @@ func addCustomUIDColumn() error {
 	}
 	log.Println("users.custom_uid 字段检查完成")
 	return nil
+}
+
+func normalizeEmptyRoomWorldFiles() error {
+	_, err := DB.Exec(`
+		UPDATE rooms
+		SET world_file = CASE
+			WHEN LOWER(TRIM(COALESCE(server_type, ''))) = 'tmodloader' THEN '.twld'
+			ELSE '.wld'
+		END,
+		updated_at = CURRENT_TIMESTAMP
+		WHERE TRIM(COALESCE(world_file, '')) = ''
+	`)
+	return err
 }
 
 func ensurePluginServerTable() error {

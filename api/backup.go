@@ -280,6 +280,15 @@ func CreateBackup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("房间目录不存在"))
 		return
 	}
+	originalWorldFile := room.WorldFile
+	room.WorldFile = normalizeRoomWorldFileForDir(room.ServerType, room.WorldFile, roomDir)
+	if room.WorldFile != originalWorldFile {
+		if err := roomStorage.Update(room); err != nil {
+			log.Printf("[Backup] Failed to persist normalized world file: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存房间世界文件失败"))
+			return
+		}
+	}
 
 	createdAt := time.Now()
 	zipName := utils.BuildBackupArchiveName(room.ID, room.Name, createdAt)
@@ -672,9 +681,10 @@ func analyzeBackupRestore(backupPath string, targetRoom *models.Room) (backupRes
 		summary.WorldFile = summary.DetectedWorldFiles[0]
 	}
 
+	targetWorldFile := normalizeRoomWorldFile(targetRoom.ServerType, targetRoom.WorldFile)
 	analysis := backupRestoreAnalysis{
 		Backup:      summary,
-		TargetRoom:  backupTargetRoomInfo{ID: targetRoom.ID, Name: targetRoom.Name, ServerType: targetRoom.ServerType, WorldFile: targetRoom.WorldFile, Status: targetRoom.Status},
+		TargetRoom:  backupTargetRoomInfo{ID: targetRoom.ID, Name: targetRoom.Name, ServerType: targetRoom.ServerType, WorldFile: targetWorldFile, Status: targetRoom.Status},
 		CanRestore:  true,
 		Checks:      []backupAnalysisCheck{},
 		FatalIssues: []string{},
@@ -725,13 +735,13 @@ func analyzeBackupRestore(backupPath string, targetRoom *models.Room) (backupRes
 		appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", "压缩包中没有识别到世界文件，恢复后可能无法直接启动。")
 	case summary.WorldFile == "" && len(summary.DetectedWorldFiles) > 1:
 		appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", fmt.Sprintf("压缩包中检测到多个世界文件：%s。请确认目标房间配置会指向正确的世界文件。", strings.Join(summary.DetectedWorldFiles, "、")))
-	case summary.WorldFile == targetRoom.WorldFile:
-		appendAnalysisCheck(&analysis, "worldFile", "世界文件", "success", fmt.Sprintf("备份世界文件为 %s，与目标房间配置一致。", targetRoom.WorldFile))
+	case summary.WorldFile == targetWorldFile:
+		appendAnalysisCheck(&analysis, "worldFile", "世界文件", "success", fmt.Sprintf("备份世界文件为 %s，与目标房间配置一致。", targetWorldFile))
 	default:
-		if len(summary.DetectedWorldFiles) > 1 && slices.Contains(summary.DetectedWorldFiles, targetRoom.WorldFile) {
-			appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", fmt.Sprintf("压缩包中包含多个世界文件，其中包含目标房间配置的 %s。", targetRoom.WorldFile))
+		if len(summary.DetectedWorldFiles) > 1 && slices.Contains(summary.DetectedWorldFiles, targetWorldFile) {
+			appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", fmt.Sprintf("压缩包中包含多个世界文件，其中包含目标房间配置的 %s。", targetWorldFile))
 		} else {
-			appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", fmt.Sprintf("备份世界文件为 %s，目标房间当前配置为 %s。恢复后如不调整房间配置，可能不会加载到刚恢复的存档。", summary.WorldFile, targetRoom.WorldFile))
+			appendAnalysisCheck(&analysis, "worldFile", "世界文件", "warning", fmt.Sprintf("备份世界文件为 %s，目标房间当前配置为 %s。恢复后如不调整房间配置，可能不会加载到刚恢复的存档。", summary.WorldFile, targetWorldFile))
 		}
 	}
 

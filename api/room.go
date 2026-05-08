@@ -159,6 +159,7 @@ func CreateRoom(c *gin.Context) {
 	}
 	fmt.Printf("[DEBUG] 创建房间请求: Name=%s, Type=%s, World=%s, Port=%d\n",
 		room.Name, room.ServerType, room.WorldFile, room.Port)
+	room.WorldFile = normalizeRoomWorldFile(room.ServerType, room.WorldFile)
 	room.Status = "stopped"
 	room.PID = 0
 	if err := roomStorage.Create(&room); err != nil {
@@ -191,7 +192,23 @@ func UpdateRoom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
+	existingRoom, err := roomStorage.GetByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取房间失败: "+err.Error()))
+		return
+	}
+	if existingRoom == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("房间不存在"))
+		return
+	}
 	updatedRoom.ID = id
+	if strings.TrimSpace(updatedRoom.ServerType) == "" {
+		updatedRoom.ServerType = existingRoom.ServerType
+	}
+	if strings.TrimSpace(updatedRoom.WorldFile) == "" {
+		updatedRoom.WorldFile = existingRoom.WorldFile
+	}
+	updatedRoom.WorldFile = normalizeRoomWorldFile(updatedRoom.ServerType, updatedRoom.WorldFile)
 	if err := roomStorage.Update(&updatedRoom); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败: "+err.Error()))
 		return
@@ -368,19 +385,15 @@ func StartRoom(c *gin.Context) {
 		return
 	}
 	roomTshockDir := filepath.Join(roomDir, "tshock")
-	var worldExt string
-	switch room.ServerType {
-	case "tmodloader":
-		worldExt = ".twld"
-	case "vanilla", "tshock":
-		worldExt = ".wld"
-	default:
-		worldExt = ".wld"
-	}
-	if !strings.HasSuffix(room.WorldFile, worldExt) {
-		room.WorldFile = strings.TrimSuffix(room.WorldFile, ".wld")
-		room.WorldFile = strings.TrimSuffix(room.WorldFile, ".twld")
-		room.WorldFile += worldExt
+	worldExt := roomWorldExtension(room.ServerType)
+	originalWorldFile := room.WorldFile
+	room.WorldFile = normalizeRoomWorldFileForDir(room.ServerType, room.WorldFile, roomDir)
+	if room.WorldFile != originalWorldFile {
+		if err := roomStorage.Update(room); err != nil {
+			log.Printf("[ERROR] 保存房间世界文件失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存房间世界文件失败"))
+			return
+		}
 	}
 	worldPath := filepath.Join(roomDir, room.WorldFile)
 	worldExists := false
