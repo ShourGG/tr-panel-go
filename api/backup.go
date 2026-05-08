@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -484,23 +485,50 @@ func RestoreBackup(c *gin.Context) {
 	}
 
 	log.Printf("[Backup] Restoring backup %s to room #%d", filepath.Base(backupPath), room.ID)
+	originalWorldFile := room.WorldFile
+	restoredWorldFile := restoredWorldFileForRoom(analysis.Backup)
+	worldFileUpdated := false
+	if restoredWorldFile != "" && restoredWorldFile != originalWorldFile {
+		room.WorldFile = restoredWorldFile
+		if err := roomStorage.Update(room); err != nil {
+			log.Printf("[Backup] Failed to update room world file before restore: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新目标房间世界文件失败"))
+			return
+		}
+		worldFileUpdated = true
+		analysis.TargetRoom.WorldFile = restoredWorldFile
+	}
+
 	roomDir := filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", room.ID))
 	if err := os.MkdirAll(roomDir, 0755); err != nil {
 		log.Printf("[Backup] Failed to create room directory: %v", err)
+		if worldFileUpdated {
+			room.WorldFile = originalWorldFile
+			if rollbackErr := roomStorage.Update(room); rollbackErr != nil {
+				log.Printf("[Backup] Failed to rollback room world file after mkdir failure: %v", rollbackErr)
+			}
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建房间目录失败"))
 		return
 	}
 
 	if err := restoreBackupArchiveAtomically(backupPath, roomDir); err != nil {
 		log.Printf("[Backup] Failed to restore backup archive: %v", err)
+		if worldFileUpdated {
+			room.WorldFile = originalWorldFile
+			if rollbackErr := roomStorage.Update(room); rollbackErr != nil {
+				log.Printf("[Backup] Failed to rollback room world file after restore failure: %v", rollbackErr)
+			}
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("恢复备份失败: "+err.Error()))
 		return
 	}
 
 	log.Printf("[Backup] Backup restored successfully to room #%d", room.ID)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message":  "备份恢复成功",
-		"analysis": analysis,
+		"message":          "备份恢复成功",
+		"analysis":         analysis,
+		"updatedWorldFile": restoredWorldFile,
 	}))
 }
 
@@ -723,6 +751,27 @@ func appendAnalysisCheck(analysis *backupRestoreAnalysis, key string, label stri
 	case "warning":
 		analysis.Warnings = append(analysis.Warnings, detail)
 	}
+}
+
+func restoredWorldFileForRoom(summary utils.BackupSummary) string {
+	candidate := strings.TrimSpace(summary.WorldFile)
+	if candidate != "" {
+		candidate = path.Base(strings.ReplaceAll(candidate, "\\", "/"))
+		if candidate == "." {
+			candidate = ""
+		}
+	}
+
+	if len(summary.DetectedWorldFiles) == 0 {
+		return ""
+	}
+	if candidate != "" && slices.Contains(summary.DetectedWorldFiles, candidate) {
+		return candidate
+	}
+	if len(summary.DetectedWorldFiles) == 1 {
+		return summary.DetectedWorldFiles[0]
+	}
+	return ""
 }
 
 func extractBackupArchive(backupPath string, targetDir string) error {

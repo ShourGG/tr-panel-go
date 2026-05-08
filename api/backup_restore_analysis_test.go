@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"terraria-panel/config"
 	"terraria-panel/db"
 	"terraria-panel/middleware"
 	"terraria-panel/models"
@@ -146,6 +148,91 @@ func TestAnalyzeBackupHandlerReportsRestoreEligibilityByRoomStatus(t *testing.T)
 	}
 }
 
+func TestRestoreBackupHandlerRequiresForceForWorldMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	backupDir, cleanup := setupBackupRestorePathTest(t)
+	defer cleanup()
+
+	backupPath := filepath.Join(backupDir, "room-1_source-room_20260508_120000.zip")
+	createBackupRestoreTestArchiveAtPath(t, backupPath, "restored.wld")
+	backupID := strings.TrimSuffix(filepath.Base(backupPath), filepath.Ext(backupPath))
+
+	room := createBackupRestoreTestRoom(t, "stopped", "current.wld")
+	roomDir := createRestoreTargetDir(t, room.ID, "current.wld", "current-world")
+
+	router, token := newBackupRestoreTestRouter(t)
+	response := performBackupRestoreRequest(t, router, token, backupID, room.ID, false)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected force confirmation conflict, got %d body=%s", response.Code, response.Body.String())
+	}
+
+	assertFileContent(t, filepath.Join(roomDir, "current.wld"), "current-world")
+	assertFileMissing(t, filepath.Join(roomDir, "restored.wld"))
+	refreshedRoom := getBackupRestoreTestRoom(t, room.ID)
+	if refreshedRoom.WorldFile != "current.wld" {
+		t.Fatalf("world file changed before force confirmation: got %s", refreshedRoom.WorldFile)
+	}
+}
+
+func TestRestoreBackupHandlerRestoresStoppedRoomAndUpdatesWorldFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	backupDir, cleanup := setupBackupRestorePathTest(t)
+	defer cleanup()
+
+	backupPath := filepath.Join(backupDir, "room-1_source-room_20260508_130000.zip")
+	createBackupRestoreTestArchiveAtPath(t, backupPath, "restored.wld")
+	backupID := strings.TrimSuffix(filepath.Base(backupPath), filepath.Ext(backupPath))
+
+	room := createBackupRestoreTestRoom(t, "stopped", "current.wld")
+	roomDir := createRestoreTargetDir(t, room.ID, "current.wld", "current-world")
+	if err := os.WriteFile(filepath.Join(roomDir, "stale.txt"), []byte("stale"), 0644); err != nil {
+		t.Fatalf("failed to create stale file: %v", err)
+	}
+
+	router, token := newBackupRestoreTestRouter(t)
+	response := performBackupRestoreRequest(t, router, token, backupID, room.ID, true)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected restore success, got %d body=%s", response.Code, response.Body.String())
+	}
+
+	assertFileMissing(t, filepath.Join(roomDir, "current.wld"))
+	assertFileMissing(t, filepath.Join(roomDir, "stale.txt"))
+	assertFileContent(t, filepath.Join(roomDir, "restored.wld"), "world-data")
+
+	refreshedRoom := getBackupRestoreTestRoom(t, room.ID)
+	if refreshedRoom.WorldFile != "restored.wld" {
+		t.Fatalf("expected restored world file to be persisted, got %s", refreshedRoom.WorldFile)
+	}
+}
+
+func TestRestoreBackupHandlerRejectsRunningRoomWithoutChangingFiles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	backupDir, cleanup := setupBackupRestorePathTest(t)
+	defer cleanup()
+
+	backupPath := filepath.Join(backupDir, "room-1_source-room_20260508_140000.zip")
+	createBackupRestoreTestArchiveAtPath(t, backupPath, "restored.wld")
+	backupID := strings.TrimSuffix(filepath.Base(backupPath), filepath.Ext(backupPath))
+
+	room := createBackupRestoreTestRoom(t, "running", "current.wld")
+	roomDir := createRestoreTargetDir(t, room.ID, "current.wld", "current-world")
+
+	router, token := newBackupRestoreTestRouter(t)
+	response := performBackupRestoreRequest(t, router, token, backupID, room.ID, true)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected running room to be rejected, got %d body=%s", response.Code, response.Body.String())
+	}
+
+	assertFileContent(t, filepath.Join(roomDir, "current.wld"), "current-world")
+	assertFileMissing(t, filepath.Join(roomDir, "restored.wld"))
+}
+
 func createBackupRestoreTestArchive(t *testing.T, worldFile string) string {
 	t.Helper()
 
@@ -178,5 +265,110 @@ func createBackupRestoreTestArchiveAtPath(t *testing.T, backupPath string, world
 	manifest := utils.NewBackupManifest(1, "Source Room", "vanilla", worldFile, "full", "", time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC))
 	if err := utils.CreateBackupArchive(backupPath, sourceDir, manifest); err != nil {
 		t.Fatalf("failed to create backup archive: %v", err)
+	}
+}
+
+func setupBackupRestorePathTest(t *testing.T) (string, func()) {
+	t.Helper()
+
+	oldDataDir := config.DataDir
+	backupDir, cleanupBackup := setupBackupResolvePathTest(t)
+	config.DataDir = filepath.Dir(backupDir)
+
+	return backupDir, func() {
+		cleanupBackup()
+		config.DataDir = oldDataDir
+	}
+}
+
+func newBackupRestoreTestRouter(t *testing.T) (*gin.Engine, string) {
+	t.Helper()
+
+	user := &models.User{ID: 1, Username: "tester", Role: "admin"}
+	token, err := middleware.GenerateToken(user)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(middleware.AuthMiddleware())
+	router.POST("/api/backups/:id/restore", RestoreBackup)
+	return router, token
+}
+
+func performBackupRestoreRequest(t *testing.T, router *gin.Engine, token string, backupID string, roomID int, force bool) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body := strings.NewReader(fmt.Sprintf(`{"targetRoomId":%d,"force":%t}`, roomID, force))
+	request := httptest.NewRequest(http.MethodPost, "/api/backups/"+backupID+"/restore", body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func createBackupRestoreTestRoom(t *testing.T, status string, worldFile string) *models.Room {
+	t.Helper()
+
+	room := &models.Room{
+		Name:       fmt.Sprintf("Room-%s-%s", status, worldFile),
+		ServerType: "vanilla",
+		WorldFile:  worldFile,
+		Port:       7777,
+		MaxPlayers: 8,
+		Status:     status,
+	}
+	if err := storage.NewSQLiteRoomStorage(db.DB).Create(room); err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+	return room
+}
+
+func getBackupRestoreTestRoom(t *testing.T, roomID int) *models.Room {
+	t.Helper()
+
+	room, err := storage.NewSQLiteRoomStorage(db.DB).GetByID(roomID)
+	if err != nil {
+		t.Fatalf("failed to get room: %v", err)
+	}
+	if room == nil {
+		t.Fatalf("expected room #%d to exist", roomID)
+	}
+	return room
+}
+
+func createRestoreTargetDir(t *testing.T, roomID int, worldFile string, content string) string {
+	t.Helper()
+
+	roomDir := filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", roomID))
+	if err := os.MkdirAll(roomDir, 0755); err != nil {
+		t.Fatalf("failed to create room dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(roomDir, worldFile), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create current world file: %v", err)
+	}
+	return roomDir
+}
+
+func assertFileContent(t *testing.T, path string, expected string) {
+	t.Helper()
+
+	actual, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected file %s to exist: %v", path, err)
+	}
+	if string(actual) != expected {
+		t.Fatalf("unexpected file content for %s: got %q want %q", path, string(actual), expected)
+	}
+}
+
+func assertFileMissing(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected file %s to be missing", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed to stat %s: %v", path, err)
 	}
 }
