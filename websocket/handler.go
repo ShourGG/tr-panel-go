@@ -53,31 +53,49 @@ func BroadcastMessage(data []byte) {
 		log.Println("[WebSocket] ⚠️ 广播通道已满，消息被丢弃")
 	}
 }
+
 func init() {
 	go handleBroadcast()
 }
+
 func handleBroadcast() {
 	for {
 		message := <-broadcast
 		log.Printf("[广播] 从队列取出消息，准备发送给所有客户端\n")
+
+		// 读锁阶段：只读 map，收集需要移除的 client
 		clientsMu.RLock()
 		clientCount := len(clients)
 		log.Printf("[广播] 当前连接客户端数: %d\n", clientCount)
 		successCount := 0
+		var staleClients []*Client
 		for client := range clients {
 			select {
 			case client.send <- message:
 				successCount++
 			default:
-				log.Println("[广播] 客户端发送队列已满，关闭连接")
-				close(client.send)
-				delete(clients, client)
+				staleClients = append(staleClients, client)
 			}
 		}
 		clientsMu.RUnlock()
+
+		// 写锁阶段：批量移除发送队列已满的 client
+		if len(staleClients) > 0 {
+			clientsMu.Lock()
+			for _, client := range staleClients {
+				if _, ok := clients[client]; ok {
+					log.Println("[广播] 客户端发送队列已满，关闭连接")
+					close(client.send)
+					delete(clients, client)
+				}
+			}
+			clientsMu.Unlock()
+		}
+
 		log.Printf("[广播] 消息发送完成: 成功 %d/%d\n", successCount, clientCount)
 	}
 }
+
 func HandleWebSocket(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

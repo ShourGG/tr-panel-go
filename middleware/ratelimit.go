@@ -1,19 +1,24 @@
 package middleware
+
 import (
 	"net/http"
 	"sync"
 	"time"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
+
 type visitor struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
+
 var (
 	visitors = make(map[string]*visitor)
 	mu       sync.Mutex
 )
+
 func cleanupVisitors() {
 	for {
 		time.Sleep(time.Minute)
@@ -58,19 +63,43 @@ func RateLimitMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+type strictVisitor struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
 func StrictRateLimitMiddleware() gin.HandlerFunc {
-	visitors := make(map[string]*rate.Limiter)
+	visitors := make(map[string]*strictVisitor)
 	mu := sync.Mutex{}
+
+	go func() {
+		for {
+			time.Sleep(time.Minute)
+			mu.Lock()
+			for ip, v := range visitors {
+				if time.Since(v.lastSeen) > 5*time.Minute {
+					delete(visitors, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		mu.Lock()
-		limiter, exists := visitors[ip]
+		v, exists := visitors[ip]
 		if !exists {
-			limiter = rate.NewLimiter(rate.Every(time.Minute), 5)
-			visitors[ip] = limiter
+			v = &strictVisitor{
+				limiter:  rate.NewLimiter(rate.Every(time.Minute), 5),
+				lastSeen: time.Now(),
+			}
+			visitors[ip] = v
 		}
+		v.lastSeen = time.Now()
 		mu.Unlock()
-		if !limiter.Allow() {
+		if !v.limiter.Allow() {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "登录尝试次数过多，请1分钟后再试",
 			})
