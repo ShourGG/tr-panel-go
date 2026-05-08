@@ -1,9 +1,16 @@
 package api
 
 import (
+	"bufio"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
+	"time"
+
+	"terraria-panel/config"
 	"terraria-panel/middleware"
 	wshandler "terraria-panel/websocket"
 
@@ -23,6 +30,13 @@ type WebSocketManager struct {
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	mu         sync.RWMutex
+}
+
+type panelLogWSMessage struct {
+	Type    string `json:"type"`
+	Level   string `json:"level,omitempty"`
+	Message string `json:"message"`
+	Time    string `json:"time"`
 }
 
 var wsManager = &WebSocketManager{
@@ -117,6 +131,76 @@ func HandleWebSocket(c *gin.Context) {
 		}
 	}()
 }
+
+func HandlePanelLogsWS(c *gin.Context) {
+	if !authorizeWebSocketRequest(c) {
+		return
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("[WebSocket] 面板日志升级失败: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	if err := writePanelLogWSMessage(conn, panelLogWSMessage{
+		Type:    "connected",
+		Message: "面板日志流已连接",
+		Time:    time.Now().Format("15:04:05"),
+	}); err != nil {
+		return
+	}
+
+	logFile := config.PanelLogFile()
+	offset, err := sendPanelLogHistory(conn, logFile)
+	if err != nil {
+		log.Printf("[WebSocket] 读取面板历史日志失败: %v", err)
+		if writePanelLogWSMessage(conn, panelLogWSMessage{
+			Type:    "error",
+			Level:   "error",
+			Message: "无法读取面板日志",
+			Time:    time.Now().Format("15:04:05"),
+		}) != nil {
+			return
+		}
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			nextOffset, err := sendPanelLogUpdates(conn, logFile, offset)
+			if err != nil {
+				log.Printf("[WebSocket] 推送面板日志失败: %v", err)
+				if writePanelLogWSMessage(conn, panelLogWSMessage{
+					Type:    "error",
+					Level:   "error",
+					Message: "面板日志推送中断",
+					Time:    time.Now().Format("15:04:05"),
+				}) != nil {
+					return
+				}
+				continue
+			}
+			offset = nextOffset
+		}
+	}
+}
+
 func BroadcastMessage(message []byte) {
 	select {
 	case wsManager.broadcast <- message:
@@ -142,4 +226,116 @@ func HandleServerLogsWS(c *gin.Context) {
 	}
 
 	wshandler.HandleServerLogs(c)
+}
+
+func sendPanelLogHistory(conn *websocket.Conn, logFile string) (int64, error) {
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return 0, writePanelLogWSMessage(conn, panelLogWSMessage{
+			Type:    "info",
+			Level:   "info",
+			Message: "No panel logs yet",
+			Time:    time.Now().Format("15:04:05"),
+		})
+	} else if err != nil {
+		return 0, err
+	}
+
+	lines, err := readLastNLines(logFile, "500")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if err := writePanelLogWSMessage(conn, panelLogEntryFromLine(line)); err != nil {
+			return 0, err
+		}
+	}
+
+	info, err := os.Stat(logFile)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+func sendPanelLogUpdates(conn *websocket.Conn, logFile string, offset int64) (int64, error) {
+	info, err := os.Stat(logFile)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return offset, err
+	}
+	if info.Size() < offset {
+		offset = 0
+	}
+	if info.Size() == offset {
+		return offset, nil
+	}
+
+	file, err := os.Open(logFile)
+	if err != nil {
+		return offset, err
+	}
+	defer file.Close()
+
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if err := writePanelLogWSMessage(conn, panelLogEntryFromLine(line)); err != nil {
+			return offset, err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return offset, err
+	}
+
+	newOffset, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return info.Size(), nil
+	}
+	return newOffset, nil
+}
+
+func writePanelLogWSMessage(conn *websocket.Conn, message panelLogWSMessage) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	return conn.WriteJSON(message)
+}
+
+func panelLogEntryFromLine(line string) panelLogWSMessage {
+	return panelLogWSMessage{
+		Type:    "log",
+		Level:   inferPanelLogLevel(line),
+		Message: line,
+		Time:    time.Now().Format("15:04:05"),
+	}
+}
+
+func inferPanelLogLevel(line string) string {
+	lowerLine := strings.ToLower(line)
+	switch {
+	case strings.Contains(lowerLine, "[fatal]"):
+		return "fatal"
+	case strings.Contains(lowerLine, "[error]"):
+		return "error"
+	case strings.Contains(lowerLine, "[warn]") || strings.Contains(lowerLine, "[warning]"):
+		return "warn"
+	case strings.Contains(lowerLine, "[debug]"):
+		return "debug"
+	case strings.Contains(lowerLine, "[info]"):
+		return "info"
+	default:
+		return "info"
+	}
 }
