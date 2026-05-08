@@ -650,8 +650,13 @@ func analyzeBackupRestore(backupPath string, targetRoom *models.Room) (backupRes
 		CanRestore: true,
 	}
 
-	if targetRoom.Status == "running" {
-		appendAnalysisCheck(&analysis, "roomStatus", "目标房间状态", "fatal", "目标房间正在运行，必须先停止后再恢复。")
+	normalizedRoomStatus := strings.ToLower(strings.TrimSpace(targetRoom.Status))
+	if normalizedRoomStatus != "stopped" {
+		statusLabel := targetRoom.Status
+		if strings.TrimSpace(statusLabel) == "" {
+			statusLabel = "unknown"
+		}
+		appendAnalysisCheck(&analysis, "roomStatus", "目标房间状态", "fatal", fmt.Sprintf("目标房间当前状态为 %s，必须先完全停止后再恢复。", statusLabel))
 	} else {
 		appendAnalysisCheck(&analysis, "roomStatus", "目标房间状态", "success", "目标房间已停止，可以执行恢复。")
 	}

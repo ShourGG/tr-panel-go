@@ -77,6 +77,8 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.PUT("/auth/password", ChangeCurrentUserPassword)
 			protected.GET("/worlds", ListWorlds)
 			protected.POST("/worlds", CreateWorld)
+			// Keep the legacy import path alive until all frontend bundles migrate.
+			protected.POST("/worlds/import", ImportWorld)
 			protected.DELETE("/worlds/:filename", DeleteWorld)
 			protected.PUT("/rooms/:id", UpdateRoom)
 			protected.DELETE("/rooms/:id", DeleteRoom)
@@ -171,6 +173,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		apiGroup.GET("/downloads/backups/:ticket", DownloadBackupByTicket)
 		apiGroup.GET("/downloads/files/:ticket", DownloadFileByTicket)
 		apiGroup.GET("/ws", HandleWebSocket)
+		apiGroup.GET("/ws/panel/logs", HandleWebSocket)
 		apiGroup.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
 		apiGroup.GET("/ws/logs/:id", HandleRoomLogsWS)
 		apiGroup.GET("/ws/server/logs", HandleServerLogsWS)
@@ -178,6 +181,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 	// Backward-compatible WebSocket routes for older frontend bundles
 	// that still connect to /ws instead of /api/ws.
 	r.GET("/ws", HandleWebSocket)
+	r.GET("/ws/panel/logs", HandleWebSocket)
 	r.GET("/ws/rooms/:id/logs", HandleRoomLogsWS)
 	r.GET("/ws/logs/:id", HandleRoomLogsWS)
 	r.GET("/ws/server/logs", HandleServerLogsWS)
