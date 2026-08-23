@@ -316,7 +316,7 @@ download_release_binary() {
             break
         fi
         checksum_available=1
-        expected=$(awk '$2 == "terraria-panel" {print $1; exit}' "$checksum_file")
+        expected=$(awk '{sub(/\r$/, "", $2); if ($2 == "terraria-panel") {print $1; exit}}' "$checksum_file")
         actual=$(sha256sum "$output" | awk '{print $1}')
         if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
             echo -e "${GREEN}SHA-256 校验通过: ${actual}${NC}"
