@@ -61,6 +61,9 @@ BACKUP_BINARY=""
 BACKUP_SERVICE=""
 DOWNLOAD_TIMEOUT=180
 DOWNLOAD_RETRIES=3
+# 代理可能先返回 Content-Length 后长时间不发送正文；低速保护让脚本及时切换下一个源。
+DOWNLOAD_SPEED_LIMIT=1
+DOWNLOAD_SPEED_TIME=20
 
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
@@ -245,10 +248,12 @@ download_file() {
 
     if command -v curl >/dev/null 2>&1; then
         curl -fL --retry "$DOWNLOAD_RETRIES" --retry-delay 2 --retry-all-errors \
-            --connect-timeout 10 --max-time "$DOWNLOAD_TIMEOUT" -o "$output" "$url"
+            --connect-timeout 10 --max-time "$DOWNLOAD_TIMEOUT" \
+            --speed-limit "$DOWNLOAD_SPEED_LIMIT" --speed-time "$DOWNLOAD_SPEED_TIME" \
+            -o "$output" "$url"
     elif command -v wget >/dev/null 2>&1; then
         wget --tries="$DOWNLOAD_RETRIES" --timeout=30 --dns-timeout=10 \
-            --connect-timeout=10 --read-timeout=30 -O "$output" "$url"
+            --connect-timeout=10 --read-timeout="$DOWNLOAD_SPEED_TIME" -O "$output" "$url"
     else
         echo -e "${RED}错误: 需要安装 wget 或 curl${NC}"
         return 1
