@@ -292,20 +292,43 @@ download_release_binary() {
     local checksum_url
     MIRROR_IDX="$downloaded_idx"
     checksum_url=$(get_release_download_url "$version" "SHA256SUMS")
-    if download_file "$checksum_url" "$checksum_file" && command -v sha256sum >/dev/null 2>&1; then
-        local expected actual
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo -e "${YELLOW}警告: 无法下载 SHA256SUMS，继续使用已下载的二进制${NC}"
+        rm -f "$checksum_file"
+        MIRROR_IDX="$original_idx"
+        return 0
+    fi
+
+    local expected actual
+    local checksum_available=0
+    local verification_attempt
+    for verification_attempt in 1 2 3; do
+        if ! download_file "$checksum_url" "$checksum_file"; then
+            break
+        fi
+        checksum_available=1
         expected=$(awk '$2 == "terraria-panel" {print $1; exit}' "$checksum_file")
         actual=$(sha256sum "$output" | awk '{print $1}')
-        if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
+            echo -e "${GREEN}SHA-256 校验通过: ${actual}${NC}"
+            rm -f "$checksum_file"
             MIRROR_IDX="$original_idx"
-            echo -e "${RED}错误: TR Panel SHA-256 校验失败${NC}"
-            rm -f "$output" "$checksum_file"
-            return 1
+            return 0
         fi
-        echo -e "${GREEN}SHA-256 校验通过: ${actual}${NC}"
-    else
-        echo -e "${YELLOW}警告: 无法下载 SHA256SUMS，继续使用已下载的二进制${NC}"
+        echo -e "${YELLOW}SHA-256 校验失败（第 ${verification_attempt}/3 次），重新下载二进制...${NC}"
+        if [ "$verification_attempt" -lt 3 ] && ! download_file "$url" "$output"; then
+            break
+        fi
+    done
+
+    if [ "$checksum_available" -eq 1 ]; then
+        echo -e "${RED}错误: TR Panel SHA-256 校验失败${NC}"
+        rm -f "$output" "$checksum_file"
+        MIRROR_IDX="$original_idx"
+        return 1
     fi
+
+    echo -e "${YELLOW}警告: 无法下载 SHA256SUMS，继续使用已下载的二进制${NC}"
     rm -f "$checksum_file"
     MIRROR_IDX="$original_idx"
 }
