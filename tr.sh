@@ -49,11 +49,12 @@ CHANNEL_FILE="${INSTALL_DIR}/update-channel"
 # ────────── GitHub 镜像支持 ──────────
 # 镜像列表：名称|API前缀|下载前缀|Raw前缀
 MIRRORS=(
-    "xs.shour.ccwu.cc:5678 (推荐)|http://xs.shour.ccwu.cc:5678/https://api.github.com|http://xs.shour.ccwu.cc:5678/https://github.com|http://xs.shour.ccwu.cc:5678/https://raw.githubusercontent.com"
+    "gh-proxy.com (推荐)|https://gh-proxy.com/https://api.github.com|https://gh-proxy.com/https://github.com|https://gh-proxy.com/https://raw.githubusercontent.com"
+    "xs.shour.ccwu.cc:5678|http://xs.shour.ccwu.cc:5678/https://api.github.com|http://xs.shour.ccwu.cc:5678/https://github.com|http://xs.shour.ccwu.cc:5678/https://raw.githubusercontent.com"
     "GitHub 官方 (直连)|https://api.github.com|https://github.com|https://raw.githubusercontent.com"
 )
 
-# 当前选中的镜像索引（默认 0 = xs.shour.ccwu.cc:5678）
+# 当前选中的镜像索引（默认 0 = gh-proxy.com）
 MIRROR_IDX=0
 VERSION_OVERRIDE=""
 BACKUP_BINARY=""
