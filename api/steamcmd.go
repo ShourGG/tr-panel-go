@@ -55,6 +55,31 @@ func getSteamCMDPaths() (string, string, string) {
 	return steamcmdDir, launcherPath, runtimePath
 }
 
+const steamCMDReadyMarkerName = ".ready"
+
+func getSteamCMDReadyMarkerPath() string {
+	steamcmdDir, _, _ := getSteamCMDPaths()
+	return filepath.Join(steamcmdDir, steamCMDReadyMarkerName)
+}
+
+func steamCMDReadyMarkerExists() bool {
+	info, err := os.Stat(getSteamCMDReadyMarkerPath())
+	return err == nil && !info.IsDir()
+}
+
+func markSteamCMDReady() error {
+	markerPath := getSteamCMDReadyMarkerPath()
+	temporaryPath := markerPath + ".tmp"
+	if err := os.WriteFile(temporaryPath, []byte("SteamCMD initialization completed\n"), 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, markerPath); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
+}
+
 func getSteamCMDState() (bool, bool, string, string, string) {
 	_, launcherPath, runtimePath := getSteamCMDPaths()
 
@@ -69,16 +94,20 @@ func getSteamCMDState() (bool, bool, string, string, string) {
 	}
 
 	installed := launcherExists
-	ready := launcherExists && runtimeExists
-	if runtime.GOOS == "windows" {
-		ready = launcherExists
-	}
+	readyMarkerExists := steamCMDReadyMarkerExists()
+	ready := launcherExists && runtimeExists && readyMarkerExists
 
 	if ready {
 		return installed, ready, launcherPath, runtimePath, "SteamCMD 已安装"
 	}
 	if installed {
-		return installed, ready, launcherPath, runtimePath, fmt.Sprintf("SteamCMD 安装不完整，缺少运行文件: %s", runtimePath)
+		if !runtimeExists {
+			return installed, ready, launcherPath, runtimePath, fmt.Sprintf("SteamCMD 安装不完整，缺少运行文件: %s", runtimePath)
+		}
+		if !readyMarkerExists {
+			return installed, ready, launcherPath, runtimePath, "SteamCMD 尚未完成首次初始化，请等待 +quit 成功后重试"
+		}
+		return installed, ready, launcherPath, runtimePath, "SteamCMD 就绪标记无效，请重新初始化"
 	}
 	return installed, ready, launcherPath, runtimePath, "SteamCMD 未安装，可以自动安装"
 }

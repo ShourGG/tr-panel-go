@@ -1471,6 +1471,9 @@ func installSteamCMD() error {
 	if err := os.MkdirAll(steamcmdDir, 0755); err != nil {
 		return fmt.Errorf("创建 SteamCMD 目录失败: %v", err)
 	}
+	// A launcher can exist while SteamCMD is still self-updating. Only a successful
+	// +quit below may make the installation visible as ready to other requests.
+	_ = os.Remove(getSteamCMDReadyMarkerPath())
 	if runtime.GOOS == "linux" {
 		for _, name := range []string{"linux32", "linux64", "package", "steamcmd.sh", "steam.sh", "steam", "steamerrorreporter", "steamerrorreporter64"} {
 			_ = os.RemoveAll(filepath.Join(steamcmdDir, name))
@@ -1620,6 +1623,9 @@ func installSteamCMD() error {
 		}
 	} else {
 		return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+	}
+	if err := markSteamCMDReady(); err != nil {
+		return fmt.Errorf("写入 SteamCMD 就绪标记失败: %v", err)
 	}
 	log.Printf("SteamCMD 安装完成")
 	return nil
