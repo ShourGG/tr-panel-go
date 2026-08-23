@@ -96,12 +96,12 @@ var tModLoaderReleaseCache = struct {
 }{}
 
 var supportedVanillaVersionCodes = []string{
-	"1456", "1455", "1454", "1453", "1452", "1451", "1450",
+	"1457", "1456", "1455", "1454", "1453", "1452", "1451", "1450",
 	"1449", "1448", "1447", "1446", "1445", "1444",
 }
 
-const latestVanillaVersionCode = "1456"
-const latestVanillaPublishedAt = "2026-03-09T18:30:10Z"
+const latestVanillaVersionCode = "1457"
+const latestVanillaPublishedAt = "2026-08-19T20:34:33Z"
 
 var activeGameTasks = struct {
 	sync.RWMutex
@@ -1936,14 +1936,14 @@ func getLatestTModLoaderRelease() (string, string) {
 	req, err := http.NewRequest("GET", apiUrl, nil)
 	if err != nil {
 		fmt.Printf("创建请求失败: %v\n", err)
-		return "https://github.com/tModLoader/tModLoader/releases/download/v2025.08.3.1/tModLoader.zip", "2025.08.3.1"
+		return "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip", "2026.06.3.6"
 	}
 	req.Header.Set("User-Agent", "Terraria-Panel")
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("请求GitHub API失败: %v\n", err)
-		return "https://github.com/tModLoader/tModLoader/releases/download/v2025.08.3.1/tModLoader.zip", "2025.08.3.1"
+		return "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip", "2026.06.3.6"
 	}
 	defer resp.Body.Close()
 	var release struct {
@@ -1955,7 +1955,7 @@ func getLatestTModLoaderRelease() (string, string) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		fmt.Printf("解析GitHub响应失败: %v\n", err)
-		return "https://github.com/tModLoader/tModLoader/releases/download/v2025.08.3.1/tModLoader.zip", "2025.08.3.1"
+		return "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip", "2026.06.3.6"
 	}
 	for _, asset := range release.Assets {
 		name := strings.ToLower(asset.Name)
@@ -1971,7 +1971,7 @@ func getLatestTModLoaderRelease() (string, string) {
 		}
 	}
 	fmt.Printf("未找到合适的tModLoader文件，使用默认值\n")
-	return "https://github.com/tModLoader/tModLoader/releases/download/v2025.08.3.1/tModLoader.zip", "2025.08.3.1"
+	return "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip", "2026.06.3.6"
 }
 
 func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
@@ -1992,12 +1992,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		}
 		return []TModLoaderReleaseInfo{
 			{
-				Code:            "v2026.01.3.3",
-				Version:         "2026.01.3.3",
-				TagName:         "v2026.01.3.3",
+				Code:            "v2026.06.3.6",
+				Version:         "2026.06.3.6",
+				TagName:         "v2026.06.3.6",
 				TerrariaVersion: "1.4.4",
-				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
-				PublishedAt:     "2026-03-19T01:43:34Z",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip",
+				PublishedAt:     "2026-08-13T02:54:26Z",
 				Prerelease:      false,
 				Recommended:     true,
 			},
@@ -2012,12 +2012,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		}
 		return []TModLoaderReleaseInfo{
 			{
-				Code:            "v2026.01.3.3",
-				Version:         "2026.01.3.3",
-				TagName:         "v2026.01.3.3",
+				Code:            "v2026.06.3.6",
+				Version:         "2026.06.3.6",
+				TagName:         "v2026.06.3.6",
 				TerrariaVersion: "1.4.4",
-				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
-				PublishedAt:     "2026-03-19T01:43:34Z",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip",
+				PublishedAt:     "2026-08-13T02:54:26Z",
 				Prerelease:      false,
 				Recommended:     true,
 			},
@@ -2041,12 +2041,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		}
 		return []TModLoaderReleaseInfo{
 			{
-				Code:            "v2026.01.3.3",
-				Version:         "2026.01.3.3",
-				TagName:         "v2026.01.3.3",
+				Code:            "v2026.06.3.6",
+				Version:         "2026.06.3.6",
+				TagName:         "v2026.06.3.6",
 				TerrariaVersion: "1.4.4",
-				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
-				PublishedAt:     "2026-03-19T01:43:34Z",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip",
+				PublishedAt:     "2026-08-13T02:54:26Z",
 				Prerelease:      false,
 				Recommended:     true,
 			},
@@ -2096,12 +2096,12 @@ func getTModLoaderReleaseOptions() []TModLoaderReleaseInfo {
 		}
 		return []TModLoaderReleaseInfo{
 			{
-				Code:            "v2026.01.3.3",
-				Version:         "2026.01.3.3",
-				TagName:         "v2026.01.3.3",
+				Code:            "v2026.06.3.6",
+				Version:         "2026.06.3.6",
+				TagName:         "v2026.06.3.6",
 				TerrariaVersion: "1.4.4",
-				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.01.3.3/tModLoader.zip",
-				PublishedAt:     "2026-03-19T01:43:34Z",
+				DownloadURL:     "https://github.com/tModLoader/tModLoader/releases/download/v2026.06.3.6/tModLoader.zip",
+				PublishedAt:     "2026-08-13T02:54:26Z",
 				Prerelease:      false,
 				Recommended:     true,
 			},

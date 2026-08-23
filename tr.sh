@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.5.0"
+SCRIPT_VERSION="1.5.1"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -58,6 +58,8 @@ MIRROR_IDX=0
 VERSION_OVERRIDE=""
 BACKUP_BINARY=""
 BACKUP_SERVICE=""
+DOWNLOAD_TIMEOUT=180
+DOWNLOAD_RETRIES=3
 
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
@@ -234,6 +236,79 @@ get_raw_url() {
     echo "${raw_base}/ShourGG/tr-panel-go/main/${path}"
 }
 
+# 下载文件时统一设置超时和重试，避免网络异常让一键安装永久卡住。
+download_file() {
+    local url="$1"
+    local output="$2"
+    rm -f "$output"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry "$DOWNLOAD_RETRIES" --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time "$DOWNLOAD_TIMEOUT" -o "$output" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --tries="$DOWNLOAD_RETRIES" --timeout=30 --dns-timeout=10 \
+            --connect-timeout=10 --read-timeout=30 -O "$output" "$url"
+    else
+        echo -e "${RED}错误: 需要安装 wget 或 curl${NC}"
+        return 1
+    fi
+
+    [ -s "$output" ]
+}
+
+# 当前镜像失败时自动尝试其它已配置镜像，并校验 release 资产。
+download_release_binary() {
+    local version="$1"
+    local output="$2"
+    local original_idx="$MIRROR_IDX"
+    local downloaded=0
+    local downloaded_idx="$original_idx"
+    local idx
+    local url
+
+    for idx in "$original_idx" $(seq 0 $((${#MIRRORS[@]} - 1))); do
+        if [ "$idx" = "$original_idx" ] && [ "$downloaded" -ne 0 ]; then
+            continue
+        fi
+        MIRROR_IDX="$idx"
+        url=$(get_release_download_url "$version" "terraria-panel")
+        echo -e "${BLUE}下载地址: ${url}${NC}"
+        if download_file "$url" "$output"; then
+            downloaded=1
+            downloaded_idx="$idx"
+            break
+        fi
+        echo -e "${YELLOW}当前下载源失败，尝试下一个下载源...${NC}"
+    done
+    if [ "$downloaded" -ne 1 ] || [ ! -s "$output" ]; then
+        MIRROR_IDX="$original_idx"
+        echo -e "${RED}错误: 所有下载源均无法获取 TR Panel ${version}${NC}"
+        rm -f "$output"
+        return 1
+    fi
+
+    local checksum_file="${output}.sha256"
+    local checksum_url
+    MIRROR_IDX="$downloaded_idx"
+    checksum_url=$(get_release_download_url "$version" "SHA256SUMS")
+    if download_file "$checksum_url" "$checksum_file" && command -v sha256sum >/dev/null 2>&1; then
+        local expected actual
+        expected=$(awk '$2 == "terraria-panel" {print $1; exit}' "$checksum_file")
+        actual=$(sha256sum "$output" | awk '{print $1}')
+        if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            MIRROR_IDX="$original_idx"
+            echo -e "${RED}错误: TR Panel SHA-256 校验失败${NC}"
+            rm -f "$output" "$checksum_file"
+            return 1
+        fi
+        echo -e "${GREEN}SHA-256 校验通过: ${actual}${NC}"
+    else
+        echo -e "${YELLOW}警告: 无法下载 SHA256SUMS，继续使用已下载的二进制${NC}"
+    fi
+    rm -f "$checksum_file"
+    MIRROR_IDX="$original_idx"
+}
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -358,20 +433,8 @@ install_service() {
         print_missing_channel_release_error
         exit 1
     fi
-    DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
     echo -e "${GREEN}[2/6] 下载 TR Panel ${VERSION}...${NC}"
-    echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${NC}"
-    if command -v wget &> /dev/null; then
-        wget -q --show-progress -O tr-panel.new "$DOWNLOAD_URL"
-    elif command -v curl &> /dev/null; then
-        curl -fL --retry 3 -o tr-panel.new "$DOWNLOAD_URL"
-    else
-        echo -e "${RED}错误: 需要安装 wget 或 curl${NC}"
-        exit 1
-    fi
-    if [ ! -s tr-panel.new ]; then
-        echo -e "${RED}错误: 下载的二进制为空${NC}"
-        rm -f tr-panel.new
+    if ! download_release_binary "$VERSION" tr-panel.new; then
         exit 1
     fi
 
@@ -485,9 +548,7 @@ update_panel() {
         print_missing_channel_release_error
         exit 1
     fi
-    DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
     echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
-    echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${NC}"
     
     systemctl stop $SERVICE_NAME
     cd $INSTALL_DIR
@@ -499,14 +560,7 @@ update_panel() {
     fi
     
     # 下载新版本（失败时自动回滚）
-    DOWNLOAD_OK=0
-    if command -v wget &> /dev/null; then
-        wget -O tr-panel.new "$DOWNLOAD_URL" && DOWNLOAD_OK=1
-    elif command -v curl &> /dev/null; then
-        curl -L -o tr-panel.new "$DOWNLOAD_URL" && DOWNLOAD_OK=1
-    fi
-    
-    if [ "$DOWNLOAD_OK" -eq 1 ] && [ -s tr-panel.new ]; then
+    if download_release_binary "$VERSION" tr-panel.new; then
         mv tr-panel.new tr-panel
         chmod +x tr-panel
         rm -f tr-panel.bak
@@ -514,7 +568,7 @@ update_panel() {
         echo -e "${GREEN}更新完成，当前版本: ${VERSION}${NC}"
     else
         # 回滚
-        rm -f tr-panel.new
+        rm -f tr-panel.new tr-panel.new.sha256
         if [ -f tr-panel.bak ]; then
             mv tr-panel.bak tr-panel
             echo -e "${RED}下载失败，已自动回滚到旧版本，服务恢复运行${NC}"

@@ -64,7 +64,7 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 发布后可以直接执行下面一条命令。它会下载指定版本、保留已有 `data` / 世界 / 备份、创建或更新 systemd 服务，并通过本机 HTTP 检查后再报告成功：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh -o /tmp/tr.sh && chmod +x /tmp/tr.sh && /tmp/tr.sh --install --port 8800 --version v1.5.1-dev.8
+curl -fsSL https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh -o /tmp/tr.sh && chmod +x /tmp/tr.sh && /tmp/tr.sh --install --port 8800 --version v1.5.1-dev.9
 ```
 
 如果使用 GitHub 直连较慢，把 `--version` 后的标签换成已发布的版本即可；不要把 `80`、`443` 或已被其他程序占用的 `7500` 当作面板端口。
@@ -75,12 +75,12 @@ curl -fsSL https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh -o /
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version v1.5.1-dev.8 `
+  -Version v1.5.1-dev.9 `
   -FrontendDir 'D:\path\to\frontend'
 git add .
 git commit -m "feat: add unified room console commands"
 git push origin main
-.\tools\publish-release.ps1 -Version v1.5.1-dev.8
+.\tools\publish-release.ps1 -Version v1.5.1-dev.9
 ```
 
 `publish-release.ps1` 使用本机已登录的 GitHub CLI 创建 prerelease，并上传 `terraria-panel` 与校验文件。稳定版发布时加上 `-Stable`。
