@@ -899,6 +899,59 @@ func trimReleaseVersion(tag string) string {
 	return strings.TrimPrefix(strings.TrimSpace(tag), "v")
 }
 
+// compareVersionTags compares the panel's SemVer-like release tags without
+// treating an older channel release as an upgrade target.
+func compareVersionTags(a, b string) int {
+	parsedA := parseReleaseVersion(a)
+	parsedB := parseReleaseVersion(b)
+	if !parsedA.Valid || !parsedB.Valid {
+		return strings.Compare(strings.TrimSpace(a), strings.TrimSpace(b))
+	}
+
+	for _, pair := range [][2]int{
+		{parsedA.Major, parsedB.Major},
+		{parsedA.Minor, parsedB.Minor},
+		{parsedA.Patch, parsedB.Patch},
+	} {
+		if pair[0] > pair[1] {
+			return 1
+		}
+		if pair[0] < pair[1] {
+			return -1
+		}
+	}
+
+	if parsedA.PreLabel == "" && parsedB.PreLabel != "" {
+		return 1
+	}
+	if parsedA.PreLabel != "" && parsedB.PreLabel == "" {
+		return -1
+	}
+	if parsedA.PreLabel != parsedB.PreLabel {
+		return strings.Compare(parsedA.PreLabel, parsedB.PreLabel)
+	}
+	if parsedA.HasPreNumber && parsedB.HasPreNumber {
+		return compareInts(parsedA.PreNumber, parsedB.PreNumber)
+	}
+	if parsedA.HasPreNumber && !parsedB.HasPreNumber {
+		return 1
+	}
+	if !parsedA.HasPreNumber && parsedB.HasPreNumber {
+		return -1
+	}
+	return 0
+}
+
+func compareInts(a, b int) int {
+	if a > b {
+		return 1
+	}
+	if a < b {
+		return -1
+	}
+	return 0
+}
+
 func GetUpdateInfo(c *gin.Context) {
 	channel := getConfiguredUpdateChannel()
 	currentVersion := getPanelVersion()
@@ -927,7 +980,7 @@ func GetUpdateInfo(c *gin.Context) {
 	response["updateUrl"] = release.HTMLURL
 	response["downloadUrl"] = findReleaseAssetDownloadURL(release, "terraria-panel")
 	response["releaseNotes"] = strings.TrimSpace(strings.ReplaceAll(release.Body, "\r\n", "\n"))
-	response["hasUpdate"] = latestVersion != currentVersion
+	response["hasUpdate"] = compareVersionTags(latestVersion, currentVersion) > 0
 	c.JSON(http.StatusOK, models.SuccessResponse(response))
 }
 
@@ -942,8 +995,17 @@ func SelfUpgrade(c *gin.Context) {
 	}
 
 	latestVersion := trimReleaseVersion(release.TagName)
-	if latestVersion == currentVersion {
+	versionComparison := compareVersionTags(latestVersion, currentVersion)
+	if versionComparison == 0 {
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已是最新版本 " + currentVersion, "upgraded": false})
+		return
+	}
+	if versionComparison < 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
+			"message":  fmt.Sprintf("当前版本 %s 高于 %s 通道版本 %s，已跳过降级", currentVersion, channel, latestVersion),
+			"upgraded": false,
+		})
 		return
 	}
 

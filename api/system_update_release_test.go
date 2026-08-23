@@ -46,3 +46,29 @@ func TestCompareReleasePriorityFallsBackToPublishedAt(t *testing.T) {
 		t.Fatal("expected newer published release to win when tag parsing falls back to publish time")
 	}
 }
+
+func TestCompareVersionTagsDoesNotDowngradeDevelopmentBuild(t *testing.T) {
+	if got := compareVersionTags("1.5.0", "1.5.1-dev.16"); got >= 0 {
+		t.Fatalf("expected stable 1.5.0 to be older than dev 1.5.1-dev.16, got %d", got)
+	}
+}
+
+func TestCompareVersionTagsOrdersDevelopmentReleases(t *testing.T) {
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want int
+	}{
+		{name: "newer dev", a: "1.5.1-dev.17", b: "1.5.1-dev.16", want: 1},
+		{name: "stable after dev", a: "1.5.1", b: "1.5.1-dev.17", want: 1},
+		{name: "equal", a: "v1.5.1-dev.16", b: "1.5.1-dev.16", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := compareVersionTags(tt.a, tt.b); got != tt.want {
+				t.Fatalf("compareVersionTags(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

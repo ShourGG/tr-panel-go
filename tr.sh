@@ -37,20 +37,22 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.5.1"
+SCRIPT_VERSION="1.5.2"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
 SERVICE_NAME="tr-panel"
 PORT=8800
 UPDATE_CHANNEL="stable"
+CHANNEL_OVERRIDE=""
 CHANNEL_FILE="${INSTALL_DIR}/update-channel"
 
 # ────────── GitHub 镜像支持 ──────────
 # 镜像列表：名称|API前缀|下载前缀|Raw前缀
 MIRRORS=(
-    "gh-proxy.com (推荐)|https://gh-proxy.com/https://api.github.com|https://gh-proxy.com/https://github.com|https://gh-proxy.com/https://raw.githubusercontent.com"
-    "xs.shour.ccwu.cc:5678|http://xs.shour.ccwu.cc:5678/https://api.github.com|http://xs.shour.ccwu.cc:5678/https://github.com|http://xs.shour.ccwu.cc:5678/https://raw.githubusercontent.com"
+    "ghfast.top (推荐)|https://ghfast.top/https://api.github.com|https://ghfast.top/https://github.com|https://ghfast.top/https://raw.githubusercontent.com"
+    "cors.isteed.cc|https://cors.isteed.cc/https://api.github.com|https://cors.isteed.cc/https://github.com|https://cors.isteed.cc/https://raw.githubusercontent.com"
+    "gh.noki.icu|https://gh.noki.icu/https://api.github.com|https://gh.noki.icu/https://github.com|https://gh.noki.icu/https://raw.githubusercontent.com"
     "GitHub 官方 (直连)|https://api.github.com|https://github.com|https://raw.githubusercontent.com"
 )
 
@@ -68,6 +70,21 @@ DOWNLOAD_SPEED_TIME=20
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
 get_mirror_raw()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f4; }
+
+version_is_prerelease() {
+    case "${1:-}" in
+        *-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+apply_version_channel() {
+    if [ -n "$CHANNEL_OVERRIDE" ]; then
+        UPDATE_CHANNEL="$CHANNEL_OVERRIDE"
+    elif version_is_prerelease "$1"; then
+        UPDATE_CHANNEL="dev"
+    fi
+}
 
 normalize_update_channel() {
     local channel=$(echo "$1" | tr '[:upper:]' '[:lower:]' | xargs)
@@ -91,6 +108,9 @@ load_update_channel() {
     fi
 
     UPDATE_CHANNEL=$(normalize_update_channel "$detected")
+    if [ -n "$CHANNEL_OVERRIDE" ]; then
+        UPDATE_CHANNEL="$CHANNEL_OVERRIDE"
+    fi
 }
 
 save_update_channel() {
@@ -191,12 +211,17 @@ get_latest_version() {
         response=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
             "${api_base}/repos/ShourGG/tr-panel-go/releases?per_page=20" 2>/dev/null)
         if command -v python3 >/dev/null 2>&1; then
-            LATEST=$(printf '%s' "$response" | python3 -c "import json, sys
+            LATEST=$(printf '%s' "$response" | python3 -c "import json, re, sys
 data = json.load(sys.stdin)
-for item in data:
-    if not item.get('draft') and item.get('prerelease'):
-        print(item.get('tag_name', ''))
-        break
+def key(item):
+    tag = item.get('tag_name', '').lstrip('v')
+    match = re.match(r'^(\\d+)\\.(\\d+)\\.(\\d+)(?:-[^.]+\\.(\\d+))?$', tag)
+    if not match:
+        return (-1, -1, -1, -1, item.get('published_at', ''))
+    return tuple(int(part or 0) for part in match.groups()[:4]) + (item.get('published_at', ''),)
+items = [item for item in data if not item.get('draft') and item.get('prerelease')]
+items.sort(key=key, reverse=True)
+print(items[0].get('tag_name', '') if items else '')
 ")
         else
             LATEST=$(echo "$response" | grep -o '"tag_name":"[^"]*".*"prerelease":true' | head -1 | cut -d'"' -f4)
@@ -469,6 +494,7 @@ install_service() {
         print_missing_channel_release_error
         exit 1
     fi
+    apply_version_channel "$VERSION"
     echo -e "${GREEN}[2/6] 下载 TR Panel ${VERSION}...${NC}"
     if ! download_release_binary "$VERSION" tr-panel.new; then
         exit 1
@@ -584,6 +610,7 @@ update_panel() {
         print_missing_channel_release_error
         exit 1
     fi
+    apply_version_channel "$VERSION"
     echo -e "${GREEN}开始更新面板 ${VERSION}...${NC}"
     
     systemctl stop $SERVICE_NAME
@@ -722,6 +749,18 @@ if [ "${1:-}" = "--install" ] || [ "${TR_PANEL_AUTO_INSTALL:-}" = "1" ]; then
                 ;;
             --version=*)
                 VERSION_OVERRIDE="${1#*=}"
+                shift
+                ;;
+            --channel)
+                if [ "$#" -lt 2 ]; then
+                    echo -e "${RED}错误: --channel 需要 stable 或 dev${NC}"
+                    exit 2
+                fi
+                CHANNEL_OVERRIDE=$(normalize_update_channel "$2")
+                shift 2
+                ;;
+            --channel=*)
+                CHANNEL_OVERRIDE=$(normalize_update_channel "${1#*=}")
                 shift
                 ;;
             --mirror=*)

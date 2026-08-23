@@ -56,7 +56,7 @@ func Load() *Config {
 		Env:                       getEnv("ENV", "development"),
 		UpdateChannel:             getEnv("UPDATE_CHANNEL", "stable"),
 		UseGitHubMirror:           useGitHubMirror,
-		GitHubMirrorURL:           getEnv("GITHUB_MIRROR_URL", "http://xs.shour.ccwu.cc:5678/"),
+		GitHubMirrorURL:           getEnv("GITHUB_MIRROR_URL", "https://ghfast.top/"),
 		DownloadRetries:           retries,
 		DownloadTimeout:           timeout,
 		EnableMultiThread:         enableMultiThread,
