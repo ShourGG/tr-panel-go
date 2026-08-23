@@ -135,6 +135,8 @@ $notes = @(
     "- Add command input and live output to the room console page."
     "- Keep the TShock PTY command path and normalize stdin commands with a newline."
     "- Improve one-command Linux installation and preserve existing panel data during updates."
+    "- Remove generated per-room vanilla and TShock configuration files when a room is deleted."
+    "- Align the embedded frontend version label with the published release version."
     ""
     "SHA-256: $hash"
 ) -join "`n"

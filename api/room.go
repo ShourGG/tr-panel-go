@@ -263,6 +263,25 @@ func UpdateRoom(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, models.MessageResponse("房间更新成功"))
 }
+
+func removeGeneratedRoomConfigs(roomID int) {
+	configDir := filepath.Join(config.DataDir, "configs")
+	paths := []string{
+		filepath.Join(configDir, fmt.Sprintf("room-%d-config.txt", roomID)),
+		filepath.Join(configDir, fmt.Sprintf("room-%d-tshock.properties", roomID)),
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			log.Printf("[WARN] 删除房间生成配置失败: %s: %v", path, err)
+			continue
+		}
+		log.Printf("[INFO] 房间生成配置已删除: %s", path)
+	}
+}
+
 func DeleteRoom(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -298,6 +317,7 @@ func DeleteRoom(c *gin.Context) {
 	if err := os.Remove(logFile); err == nil {
 		log.Printf("[INFO] 日志文件已删除: %s", logFile)
 	}
+	removeGeneratedRoomConfigs(room.ID)
 	if err := roomStorage.Delete(id); err != nil {
 		log.Printf("[ERROR] 删除房间记录失败: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败: "+err.Error()))
