@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"terraria-panel/config"
@@ -34,6 +35,20 @@ type WorldInfo struct {
 	Path   string `json:"path"`
 }
 
+type updateRoomRequest struct {
+	Name       *string `json:"name"`
+	ServerType *string `json:"serverType"`
+	WorldFile  *string `json:"worldFile"`
+	Port       *int    `json:"port"`
+	MaxPlayers *int    `json:"maxPlayers"`
+	Password   *string `json:"password"`
+	ModProfile *string `json:"modProfile"`
+	WorldSize  *string `json:"worldSize"`
+	Difficulty *string `json:"difficulty"`
+	EvilType   *string `json:"evilType"`
+	Seed       *string `json:"seed"`
+}
+
 func GetWorldsForRoom(c *gin.Context) {
 	serverType := c.Query("serverType")
 	var worldExt string
@@ -51,14 +66,16 @@ func GetWorldsForRoom(c *gin.Context) {
 		for _, roomDir := range roomDirs {
 			if roomDir.IsDir() {
 				roomPath := filepath.Join(roomsDir, roomDir.Name())
-				if files, err := os.ReadDir(roomPath); err == nil {
-					for _, file := range files {
-						if !file.IsDir() && filepath.Ext(file.Name()) == worldExt {
-							if _, exists := worldMap[file.Name()]; !exists {
-								worldMap[file.Name()] = WorldInfo{
-									Name:   file.Name(),
-									Source: "房间: " + roomDir.Name(),
-									Path:   filepath.Join(roomPath, file.Name()),
+				for _, worldDir := range roomWorldDirectories(roomPath, serverType) {
+					if files, err := os.ReadDir(worldDir); err == nil {
+						for _, file := range files {
+							if !file.IsDir() && strings.EqualFold(filepath.Ext(file.Name()), worldExt) {
+								if _, exists := worldMap[file.Name()]; !exists {
+									worldMap[file.Name()] = WorldInfo{
+										Name:   file.Name(),
+										Source: "房间: " + roomDir.Name(),
+										Path:   filepath.Join(worldDir, file.Name()),
+									}
 								}
 							}
 						}
@@ -70,7 +87,7 @@ func GetWorldsForRoom(c *gin.Context) {
 	os.MkdirAll(config.SharedWorldsDir, 0755)
 	if files, err := os.ReadDir(config.SharedWorldsDir); err == nil {
 		for _, file := range files {
-			if !file.IsDir() && filepath.Ext(file.Name()) == worldExt {
+			if !file.IsDir() && strings.EqualFold(filepath.Ext(file.Name()), worldExt) {
 				if _, exists := worldMap[file.Name()]; !exists {
 					worldMap[file.Name()] = WorldInfo{
 						Name:   file.Name(),
@@ -85,6 +102,9 @@ func GetWorldsForRoom(c *gin.Context) {
 	for _, world := range worldMap {
 		worlds = append(worlds, world)
 	}
+	sort.Slice(worlds, func(i, j int) bool {
+		return strings.ToLower(worlds[i].Name) < strings.ToLower(worlds[j].Name)
+	})
 	log.Printf("[INFO] 找到 %d 个可用世界文件（类型：%s）", len(worlds), serverType)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -187,8 +207,8 @@ func UpdateRoom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的房间ID"))
 		return
 	}
-	var updatedRoom models.Room
-	if err := c.ShouldBindJSON(&updatedRoom); err != nil {
+	var req updateRoomRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
@@ -201,12 +221,40 @@ func UpdateRoom(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("房间不存在"))
 		return
 	}
+	updatedRoom := *existingRoom
 	updatedRoom.ID = id
-	if strings.TrimSpace(updatedRoom.ServerType) == "" {
-		updatedRoom.ServerType = existingRoom.ServerType
+	if req.Name != nil {
+		updatedRoom.Name = *req.Name
 	}
-	if strings.TrimSpace(updatedRoom.WorldFile) == "" {
-		updatedRoom.WorldFile = existingRoom.WorldFile
+	if req.ServerType != nil {
+		updatedRoom.ServerType = *req.ServerType
+	}
+	if req.WorldFile != nil {
+		updatedRoom.WorldFile = *req.WorldFile
+	}
+	if req.Port != nil {
+		updatedRoom.Port = *req.Port
+	}
+	if req.MaxPlayers != nil {
+		updatedRoom.MaxPlayers = *req.MaxPlayers
+	}
+	if req.Password != nil {
+		updatedRoom.Password = *req.Password
+	}
+	if req.ModProfile != nil {
+		updatedRoom.ModProfile = *req.ModProfile
+	}
+	if req.WorldSize != nil {
+		updatedRoom.WorldSize = *req.WorldSize
+	}
+	if req.Difficulty != nil {
+		updatedRoom.Difficulty = *req.Difficulty
+	}
+	if req.EvilType != nil {
+		updatedRoom.EvilType = *req.EvilType
+	}
+	if req.Seed != nil {
+		updatedRoom.Seed = *req.Seed
 	}
 	updatedRoom.WorldFile = normalizeRoomWorldFile(updatedRoom.ServerType, updatedRoom.WorldFile)
 	if err := roomStorage.Update(&updatedRoom); err != nil {
@@ -273,15 +321,17 @@ func copyWorldFileFromSource(worldFileName string, targetPath string, serverType
 		for _, roomDir := range roomDirs {
 			if roomDir.IsDir() {
 				roomPath := filepath.Join(roomsDir, roomDir.Name())
-				sourcePath := filepath.Join(roomPath, worldFileName)
-				if _, err := os.Stat(sourcePath); err == nil {
-					log.Printf("[INFO] 找到源世界文件: %s", sourcePath)
-					if err := copyFile(sourcePath, targetPath); err == nil {
-						log.Printf("[INFO] 世界文件复制成功: %s -> %s", sourcePath, targetPath)
-						copyBackupFiles(roomPath, filepath.Dir(targetPath), worldFileName, worldExt)
-						return true
-					} else {
-						log.Printf("[ERROR] 复制世界文件失败: %v", err)
+				for _, worldDir := range roomWorldDirectories(roomPath, serverType) {
+					sourcePath := filepath.Join(worldDir, worldFileName)
+					if _, err := os.Stat(sourcePath); err == nil {
+						log.Printf("[INFO] 找到源世界文件: %s", sourcePath)
+						if err := copyFile(sourcePath, targetPath); err == nil {
+							log.Printf("[INFO] 世界文件复制成功: %s -> %s", sourcePath, targetPath)
+							copyBackupFiles(worldDir, filepath.Dir(targetPath), worldFileName, worldExt)
+							return true
+						} else {
+							log.Printf("[ERROR] 复制世界文件失败: %v", err)
+						}
 					}
 				}
 			}
@@ -356,6 +406,51 @@ func migrateOldWorldFile(room *models.Room, roomDir string, newWorldPath string,
 		}
 	}
 }
+
+func roomWorldSizeValue(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "small", "1":
+		return "1"
+	case "large", "3":
+		return "3"
+	default:
+		return "2"
+	}
+}
+
+func roomDifficultyValue(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "expert", "1":
+		return "1"
+	case "master", "2":
+		return "2"
+	case "journey", "3":
+		return "3"
+	default:
+		return "0"
+	}
+}
+
+func roomEvilValue(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "corrupt", "corruption", "1":
+		return "corrupt"
+	case "crimson", "2":
+		return "crimson"
+	default:
+		return "random"
+	}
+}
+
+func appendRoomWorldCreationArgs(args []string, room *models.Room) []string {
+	args = append(args, "-difficulty", roomDifficultyValue(room.Difficulty))
+	args = append(args, "-worldevil", roomEvilValue(room.EvilType))
+	if seed := strings.TrimSpace(room.Seed); seed != "" {
+		args = append(args, "-seed", seed)
+	}
+	return args
+}
+
 func StartRoom(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -592,17 +687,10 @@ func StartRoom(c *gin.Context) {
 		worldPathForParam := strings.Replace(actualWorldPath, ".twld", ".wld", 1)
 		args = append(args, "-world", worldPathForParam)
 		if !worldExists {
-			worldSizeMap := map[string]string{
-				"small":  "1",
-				"medium": "2",
-				"large":  "3",
-			}
-			autocreateSize := worldSizeMap[room.WorldSize]
-			if autocreateSize == "" {
-				autocreateSize = "2"
-			}
+			autocreateSize := roomWorldSizeValue(room.WorldSize)
 			args = append(args, "-autocreate", autocreateSize)
 			args = append(args, "-worldname", worldName)
+			args = appendRoomWorldCreationArgs(args, room)
 			log.Printf("[INFO] 世界不存在，将自动创建 (autocreate=%s, worldname=%s)", autocreateSize, worldName)
 		} else {
 			args = append(args, "-autocreate", "0")
@@ -639,11 +727,13 @@ port=%d
 password=%s
 worldname=%s
 autocreate=%d
-difficulty=0
+difficulty=%s
+worldevil=%s
 worldrollbackstokeep=10
 language=zh-Hans
-seed=
-`, room.MaxPlayers, worldPath, roomDir, room.Port, room.Password, worldName, autocreateValue)
+seed=%s
+`, room.MaxPlayers, worldPath, roomDir, room.Port, room.Password, worldName, autocreateValue,
+			roomDifficultyValue(room.Difficulty), roomEvilValue(room.EvilType), strings.TrimSpace(room.Seed))
 		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 			log.Printf("[ERROR] 创建配置文件失败: %v", err)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建配置文件失败"))
@@ -677,31 +767,39 @@ seed=
 			return
 		}
 		if useDotNet {
-			hasNet6, allRuntimes, err := utils.CheckDotNetRuntime6()
+			detection := detectInstalledTShockVersion(tshockDir)
+			requiredRuntime := getRequiredDotNetRuntime(detection.Version)
+			hasRequiredRuntime, allRuntimes, err := utils.CheckDotNetRuntimeVersion(requiredRuntime)
 			if err != nil {
 				errMsg := fmt.Sprintf("无法检测 .NET Runtime: %v", err)
 				log.Printf("[ERROR] %s", errMsg)
 				c.JSON(http.StatusInternalServerError, models.ErrorResponse(errMsg))
 				return
 			}
-			if !hasNet6 {
+			if !hasRequiredRuntime {
 				installedRuntimes, _ := utils.GetInstalledDotNetRuntimes()
-				installCommands, _ := utils.GetDotNet6InstallCommand()
-				errMsg := fmt.Sprintf(`TShock 启动失败：缺少 .NET 6.0 Runtime
+				installCommands, _ := utils.GetDotNetInstallCommand(requiredRuntime)
+				versionLabel := detection.Version
+				if versionLabel == "unknown" {
+					versionLabel = "未知版本"
+				}
+				errMsg := fmt.Sprintf(`TShock 启动失败：缺少 .NET %s Runtime
 当前系统已安装的 .NET Runtime：
 %s
-TShock 5.x 需要 .NET 6.0 Runtime，但系统未安装此版本
+检测到 TShock %s，当前版本需要 .NET %s Runtime，但系统未安装此版本
 解决方案：
 %s
 安装完成后，请重新启动房间。
-参考文档：https://dotnet.microsoft.com/download/dotnet/6.0`,
+参考文档：https://dotnet.microsoft.com/download/dotnet/%s`,
+					requiredRuntime,
 					formatRuntimeList(installedRuntimes),
-					strings.Join(installCommands, "\n"))
+					versionLabel, requiredRuntime,
+					strings.Join(installCommands, "\n"), requiredRuntime)
 				log.Printf("[ERROR] %s", errMsg)
 				c.JSON(http.StatusInternalServerError, models.ErrorResponse(errMsg))
 				return
 			}
-			log.Printf("[INFO] .NET 6.0 Runtime 检查通过")
+			log.Printf("[INFO] .NET %s Runtime 检查通过", requiredRuntime)
 			log.Printf("[DEBUG] 已安装的 Runtime:\n%s", allRuntimes)
 		}
 		if err := os.Chmod(exePath, 0755); err != nil {
@@ -784,13 +882,16 @@ maxplayers=%d
 password=%s
 worldname=%s
 autocreate=%d
-difficulty=0
+difficulty=%s
+worldevil=%s
 language=zh-Hans
 upnp=0
 priority=1
 motd=%s/motd.txt
+seed=%s
 `, room.ID, roomTshockDir, worldPath, roomDir, room.Port, room.MaxPlayers,
-			room.Password, worldName, autocreateValue, roomTshockDir)
+			room.Password, worldName, autocreateValue, roomDifficultyValue(room.Difficulty),
+			roomEvilValue(room.EvilType), roomTshockDir, strings.TrimSpace(room.Seed))
 		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 			log.Printf("[ERROR] 创建配置文件失败: %v", err)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建配置文件失败"))
@@ -835,6 +936,9 @@ motd=%s/motd.txt
 				"-worldpath", roomDir,
 				"-port", fmt.Sprintf("%d", room.Port),
 			}
+			if !worldExists {
+				args = appendRoomWorldCreationArgs(args, room)
+			}
 			log.Printf("[INFO] TShock 启动方式: .NET Runtime")
 		} else {
 			command = exePath
@@ -844,6 +948,9 @@ motd=%s/motd.txt
 				"-configpath", roomTshockDir,
 				"-worldpath", roomDir,
 				"-port", fmt.Sprintf("%d", room.Port),
+			}
+			if !worldExists {
+				args = appendRoomWorldCreationArgs(args, room)
 			}
 			log.Printf("[INFO] TShock 启动方式: 原生可执行文件")
 		}

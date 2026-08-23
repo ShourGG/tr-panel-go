@@ -9,25 +9,29 @@ import (
 	"terraria-panel/db"
 	"terraria-panel/models"
 	"terraria-panel/utils"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type PlayerListItem struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	IP           string `json:"ip"`
-	RoomID       int    `json:"roomId"`
-	RoomName     string `json:"roomName"`
-	RoomType     string `json:"roomType"`
-	RoomTypeText string `json:"roomTypeText"`
-	LoginCount   int    `json:"loginCount"`
-	Status       string `json:"status"`
-	Online       bool   `json:"online"`
-	Banned       bool   `json:"banned"`
-	BanReason    string `json:"banReason,omitempty"`
-	BanTime      string `json:"banTime,omitempty"`
-	Operator     string `json:"operator,omitempty"`
+	ID           int        `json:"id"`
+	Name         string     `json:"name"`
+	IP           string     `json:"ip"`
+	RoomID       int        `json:"roomId"`
+	RoomName     string     `json:"roomName"`
+	RoomType     string     `json:"roomType"`
+	RoomTypeText string     `json:"roomTypeText"`
+	LoginCount   int        `json:"loginCount"`
+	PlayTime     int        `json:"playTime"`
+	Status       string     `json:"status"`
+	Online       bool       `json:"online"`
+	Banned       bool       `json:"banned"`
+	LastSeen     *time.Time `json:"lastSeen,omitempty"`
+	JoinTime     *time.Time `json:"joinTime,omitempty"`
+	BanReason    string     `json:"banReason,omitempty"`
+	BanTime      string     `json:"banTime,omitempty"`
+	Operator     string     `json:"operator,omitempty"`
 }
 
 type playerActionTarget struct {
@@ -221,8 +225,17 @@ func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
 			COALESCE(r.name, ''),
 			COALESCE(r.server_type, ''),
 			COALESCE(ps.login_count, 0),
+			COALESCE(ps.total_play_time, 0),
 			COALESCE(p.status, 'offline'),
-			COALESCE(p.is_banned, 0)
+			COALESCE(p.is_banned, 0),
+			COALESCE(p.last_seen, p.created_at),
+			(
+				SELECT ps2.join_time
+				FROM player_sessions ps2
+				WHERE ps2.player_id = p.id AND ps2.leave_time IS NULL
+				ORDER BY ps2.join_time DESC
+				LIMIT 1
+			)
 		FROM players p
 		LEFT JOIN rooms r ON p.room_id = r.id
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
@@ -247,6 +260,8 @@ func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
 	for rows.Next() {
 		var item PlayerListItem
 		var isBanned bool
+		var lastSeenRaw sql.NullString
+		var joinTimeRaw sql.NullString
 		if err := rows.Scan(
 			&item.ID,
 			&item.Name,
@@ -255,14 +270,23 @@ func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
 			&item.RoomName,
 			&item.RoomType,
 			&item.LoginCount,
+			&item.PlayTime,
 			&item.Status,
 			&isBanned,
+			&lastSeenRaw,
+			&joinTimeRaw,
 		); err != nil {
 			return nil, err
 		}
 
 		item.Banned = isBanned
 		item.Online = item.Status == "online"
+		if parsed, ok := parsePlayerTime(lastSeenRaw.String); ok {
+			item.LastSeen = parsed
+		}
+		if parsed, ok := parsePlayerTime(joinTimeRaw.String); ok {
+			item.JoinTime = parsed
+		}
 		item.RoomTypeText = formatPlayerRoomType(item.RoomType)
 		if item.Banned {
 			item.BanReason, item.BanTime = getLatestBanInfo(item.Name)
@@ -275,6 +299,25 @@ func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
 	}
 
 	return players, nil
+}
+
+func parsePlayerTime(raw string) (*time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+			return &parsed, true
+		}
+	}
+	return nil, false
 }
 
 func getLatestBanInfo(playerName string) (string, string) {

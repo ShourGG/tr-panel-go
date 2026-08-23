@@ -208,12 +208,12 @@ func (p *Process) GetPID() int {
 func (p *Process) SendCommand(command string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !strings.HasSuffix(command, "\n") {
+		command += "\n"
+	}
 	if p.usePTY {
 		if p.ptyFile == nil {
 			return fmt.Errorf("PTY is not available")
-		}
-		if !strings.HasSuffix(command, "\n") {
-			command += "\n"
 		}
 		_, err := p.ptyFile.Write([]byte(command))
 		if err != nil {

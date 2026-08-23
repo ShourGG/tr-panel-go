@@ -85,6 +85,7 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 			protected.POST("/rooms/:id/start", StartRoom)
 			protected.POST("/rooms/:id/stop", StopRoom)
 			protected.POST("/rooms/:id/restart", RestartRoom)
+			protected.POST("/rooms/:id/command", SendRoomCommand)
 			protected.POST("/rooms/import-world", ImportWorld)
 			protected.DELETE("/rooms/:id/admin-token", DeleteAdminToken)
 			protected.POST("/rooms/:id/admin-token/regenerate", RegenerateAdminToken)

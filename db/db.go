@@ -44,6 +44,7 @@ func migrateDatabase() error {
 		"ALTER TABLE rooms ADD COLUMN world_size TEXT DEFAULT 'medium'",
 		"ALTER TABLE rooms ADD COLUMN difficulty TEXT DEFAULT 'normal'",
 		"ALTER TABLE rooms ADD COLUMN evil_type TEXT DEFAULT 'corruption'",
+		"ALTER TABLE rooms ADD COLUMN seed TEXT DEFAULT ''",
 		"ALTER TABLE rooms ADD COLUMN start_time DATETIME",
 		"ALTER TABLE rooms ADD COLUMN admin_token TEXT",
 		"ALTER TABLE players ADD COLUMN room_id INTEGER DEFAULT 0",

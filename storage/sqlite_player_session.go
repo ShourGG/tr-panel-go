@@ -44,15 +44,20 @@ func (s *SQLitePlayerSessionStorage) Create(session *models.PlayerSession) error
 }
 func (s *SQLitePlayerSessionStorage) GetByID(id int) (*models.PlayerSession, error) {
 	query := `
-		SELECT id, player_id, room_id, join_time, leave_time, duration, ip_address, created_at
-		FROM player_sessions
-		WHERE id = ?
+		SELECT ps.id, ps.player_id, COALESCE(p.name, ''), ps.room_id, COALESCE(r.name, ''),
+			ps.join_time, ps.leave_time, ps.duration, ps.ip_address, ps.created_at
+		FROM player_sessions ps
+		LEFT JOIN players p ON ps.player_id = p.id
+		LEFT JOIN rooms r ON ps.room_id = r.id
+		WHERE ps.id = ?
 	`
 	session := &models.PlayerSession{}
 	err := s.db.QueryRow(query, id).Scan(
 		&session.ID,
 		&session.PlayerID,
+		&session.PlayerName,
 		&session.RoomID,
+		&session.RoomName,
 		&session.JoinTime,
 		&session.LeaveTime,
 		&session.Duration,
@@ -75,10 +80,13 @@ func (s *SQLitePlayerSessionStorage) GetByPlayerID(playerID int, limit, offset i
 		return nil, 0, err
 	}
 	query := `
-		SELECT id, player_id, room_id, join_time, leave_time, duration, ip_address, created_at
-		FROM player_sessions
-		WHERE player_id = ?
-		ORDER BY join_time DESC
+		SELECT ps.id, ps.player_id, COALESCE(p.name, ''), ps.room_id, COALESCE(r.name, ''),
+			ps.join_time, ps.leave_time, ps.duration, ps.ip_address, ps.created_at
+		FROM player_sessions ps
+		LEFT JOIN players p ON ps.player_id = p.id
+		LEFT JOIN rooms r ON ps.room_id = r.id
+		WHERE ps.player_id = ?
+		ORDER BY ps.join_time DESC
 		LIMIT ? OFFSET ?
 	`
 	rows, err := s.db.Query(query, playerID, limit, offset)
@@ -92,7 +100,9 @@ func (s *SQLitePlayerSessionStorage) GetByPlayerID(playerID int, limit, offset i
 		err := rows.Scan(
 			&session.ID,
 			&session.PlayerID,
+			&session.PlayerName,
 			&session.RoomID,
+			&session.RoomName,
 			&session.JoinTime,
 			&session.LeaveTime,
 			&session.Duration,
@@ -108,17 +118,22 @@ func (s *SQLitePlayerSessionStorage) GetByPlayerID(playerID int, limit, offset i
 }
 func (s *SQLitePlayerSessionStorage) GetActiveSession(playerID, roomID int) (*models.PlayerSession, error) {
 	query := `
-		SELECT id, player_id, room_id, join_time, leave_time, duration, ip_address, created_at
-		FROM player_sessions
-		WHERE player_id = ? AND room_id = ? AND leave_time IS NULL
-		ORDER BY join_time DESC
+		SELECT ps.id, ps.player_id, COALESCE(p.name, ''), ps.room_id, COALESCE(r.name, ''),
+			ps.join_time, ps.leave_time, ps.duration, ps.ip_address, ps.created_at
+		FROM player_sessions ps
+		LEFT JOIN players p ON ps.player_id = p.id
+		LEFT JOIN rooms r ON ps.room_id = r.id
+		WHERE ps.player_id = ? AND ps.room_id = ? AND ps.leave_time IS NULL
+		ORDER BY ps.join_time DESC
 		LIMIT 1
 	`
 	session := &models.PlayerSession{}
 	err := s.db.QueryRow(query, playerID, roomID).Scan(
 		&session.ID,
 		&session.PlayerID,
+		&session.PlayerName,
 		&session.RoomID,
+		&session.RoomName,
 		&session.JoinTime,
 		&session.LeaveTime,
 		&session.Duration,
@@ -150,9 +165,12 @@ func (s *SQLitePlayerSessionStorage) GetAll(limit, offset int) ([]*models.Player
 		return nil, 0, err
 	}
 	query := `
-		SELECT id, player_id, room_id, join_time, leave_time, duration, ip_address, created_at
-		FROM player_sessions
-		ORDER BY join_time DESC
+		SELECT ps.id, ps.player_id, COALESCE(p.name, ''), ps.room_id, COALESCE(r.name, ''),
+			ps.join_time, ps.leave_time, ps.duration, ps.ip_address, ps.created_at
+		FROM player_sessions ps
+		LEFT JOIN players p ON ps.player_id = p.id
+		LEFT JOIN rooms r ON ps.room_id = r.id
+		ORDER BY ps.join_time DESC
 		LIMIT ? OFFSET ?
 	`
 	rows, err := s.db.Query(query, limit, offset)
@@ -166,7 +184,9 @@ func (s *SQLitePlayerSessionStorage) GetAll(limit, offset int) ([]*models.Player
 		err := rows.Scan(
 			&session.ID,
 			&session.PlayerID,
+			&session.PlayerName,
 			&session.RoomID,
+			&session.RoomName,
 			&session.JoinTime,
 			&session.LeaveTime,
 			&session.Duration,

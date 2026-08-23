@@ -61,6 +61,12 @@ func TestUpdateRoomPreservesExistingWorldFileWhenPayloadOmitsIt(t *testing.T) {
 		WorldFile:  "current.wld",
 		Port:       7777,
 		MaxPlayers: 8,
+		Password:   "room-secret",
+		ModProfile: "profile-1",
+		WorldSize:  "large",
+		Difficulty: "expert",
+		EvilType:   "crimson",
+		Seed:       "05162020",
 		Status:     "stopped",
 	}
 	roomStore := storage.NewSQLiteRoomStorage(db.DB)
@@ -88,6 +94,68 @@ func TestUpdateRoomPreservesExistingWorldFileWhenPayloadOmitsIt(t *testing.T) {
 	}
 	if updatedRoom.WorldFile != "current.wld" {
 		t.Fatalf("expected world file to be preserved, got %q", updatedRoom.WorldFile)
+	}
+	if updatedRoom.Password != "room-secret" || updatedRoom.ModProfile != "profile-1" {
+		t.Fatalf("expected omitted string fields to be preserved, got password=%q modProfile=%q", updatedRoom.Password, updatedRoom.ModProfile)
+	}
+	if updatedRoom.WorldSize != "large" || updatedRoom.Difficulty != "expert" || updatedRoom.EvilType != "crimson" || updatedRoom.Seed != "05162020" {
+		t.Fatalf("expected omitted world settings to be preserved, got size=%q difficulty=%q evil=%q seed=%q", updatedRoom.WorldSize, updatedRoom.Difficulty, updatedRoom.EvilType, updatedRoom.Seed)
+	}
+}
+
+func TestUpdateRoomAllowsExplicitlyClearingOptionalFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cleanup := setupRoomWorldFileTest(t)
+	defer cleanup()
+
+	room := &models.Room{
+		Name:       "Room A",
+		ServerType: "vanilla",
+		WorldFile:  "current.wld",
+		Port:       7777,
+		MaxPlayers: 8,
+		Password:   "room-secret",
+		ModProfile: "profile-1",
+		Seed:       "05162020",
+		Status:     "stopped",
+	}
+	roomStore := storage.NewSQLiteRoomStorage(db.DB)
+	if err := roomStore.Create(room); err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/rooms/:id", UpdateRoom)
+	body := strings.NewReader(`{"password":"","modProfile":"","seed":""}`)
+	request := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/rooms/%d", room.ID), body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected room update to succeed, got %d body=%s", response.Code, response.Body.String())
+	}
+	updatedRoom, err := roomStore.GetByID(room.ID)
+	if err != nil {
+		t.Fatalf("failed to get updated room: %v", err)
+	}
+	if updatedRoom.Password != "" || updatedRoom.ModProfile != "" || updatedRoom.Seed != "" {
+		t.Fatalf("expected explicit empty fields to be cleared, got password=%q modProfile=%q seed=%q", updatedRoom.Password, updatedRoom.ModProfile, updatedRoom.Seed)
+	}
+}
+
+func TestDetectSingleRoomWorldFileFindsTModLoaderWorldsDirectory(t *testing.T) {
+	roomDir := t.TempDir()
+	worldsDir := filepath.Join(roomDir, "Worlds")
+	if err := os.MkdirAll(worldsDir, 0755); err != nil {
+		t.Fatalf("failed to create tModLoader worlds directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worldsDir, "Nested.twld"), []byte("world"), 0644); err != nil {
+		t.Fatalf("failed to create nested world file: %v", err)
+	}
+
+	if got := detectSingleRoomWorldFile(roomDir, "tmodloader"); got != "Nested.twld" {
+		t.Fatalf("detected world file = %q, want Nested.twld", got)
 	}
 }
 

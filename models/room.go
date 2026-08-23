@@ -1,24 +1,27 @@
 package models
+
 import "time"
+
 type Room struct {
-	ID          int        `json:"id" db:"id"`
-	Name        string     `json:"name" db:"name"`
-	ServerType  string     `json:"serverType" db:"server_type"`
-	WorldFile   string     `json:"worldFile" db:"world_file"`
-	Port        int        `json:"port" db:"port"`
-	MaxPlayers  int        `json:"maxPlayers" db:"max_players"`
-	Password    string     `json:"password,omitempty" db:"password"`
-	ModProfile  string     `json:"modProfile,omitempty" db:"mod_profile"`
-	WorldSize   string     `json:"worldSize,omitempty" db:"world_size"`
-	Difficulty  string     `json:"difficulty,omitempty" db:"difficulty"`
-	EvilType    string     `json:"evilType,omitempty" db:"evil_type"`
-	Status      string     `json:"status" db:"status"`
-	PID         int        `json:"pid,omitempty" db:"pid"`
-	StartTime   *time.Time `json:"startTime,omitempty" db:"start_time"`
-	AdminToken  string     `json:"adminToken,omitempty" db:"admin_token"`
-	CreatedAt   time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time  `json:"updatedAt" db:"updated_at"`
-	CustomHome  string     `json:"-" db:"-"`
+	ID         int        `json:"id" db:"id"`
+	Name       string     `json:"name" db:"name"`
+	ServerType string     `json:"serverType" db:"server_type"`
+	WorldFile  string     `json:"worldFile" db:"world_file"`
+	Port       int        `json:"port" db:"port"`
+	MaxPlayers int        `json:"maxPlayers" db:"max_players"`
+	Password   string     `json:"password,omitempty" db:"password"`
+	ModProfile string     `json:"modProfile,omitempty" db:"mod_profile"`
+	WorldSize  string     `json:"worldSize,omitempty" db:"world_size"`
+	Difficulty string     `json:"difficulty,omitempty" db:"difficulty"`
+	EvilType   string     `json:"evilType,omitempty" db:"evil_type"`
+	Seed       string     `json:"seed,omitempty" db:"seed"`
+	Status     string     `json:"status" db:"status"`
+	PID        int        `json:"pid,omitempty" db:"pid"`
+	StartTime  *time.Time `json:"startTime,omitempty" db:"start_time"`
+	AdminToken string     `json:"adminToken,omitempty" db:"admin_token"`
+	CreatedAt  time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updatedAt" db:"updated_at"`
+	CustomHome string     `json:"-" db:"-"`
 }
 type Player struct {
 	ID        int       `json:"id" db:"id"`

@@ -1,4 +1,5 @@
 package utils
+
 import (
 	"os"
 	"os/exec"
@@ -7,6 +8,7 @@ import (
 	"strings"
 	"terraria-panel/config"
 )
+
 func CheckTShockInstalled() (bool, string) {
 	tshockDir := filepath.Join(config.ServersDir, "tshock")
 	var exePath string
@@ -51,14 +53,28 @@ func CheckDotNetRuntime() (bool, string, error) {
 	return CheckDotNetRuntime6()
 }
 func CheckDotNetRuntime6() (bool, string, error) {
+	return CheckDotNetRuntimeVersion("6.0")
+}
+func CheckDotNetRuntimeVersion(required string) (bool, string, error) {
+	required = strings.TrimSpace(required)
+	if required == "" {
+		required = "6.0"
+	}
 	cmd := exec.Command("dotnet", "--list-runtimes")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, "", err
 	}
 	runtimes := string(output)
-	hasNet6 := strings.Contains(runtimes, "Microsoft.NETCore.App 6.0")
-	if !hasNet6 {
+	hasRequired := false
+	for _, line := range strings.Split(runtimes, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Microsoft.NETCore.App "+required+".") || line == "Microsoft.NETCore.App "+required {
+			hasRequired = true
+			break
+		}
+	}
+	if !hasRequired && required == "6.0" {
 		dpkgCmd := exec.Command("dpkg", "-l", "dotnet-runtime-6.0")
 		dpkgOutput, dpkgErr := dpkgCmd.CombinedOutput()
 		if dpkgErr == nil && strings.Contains(string(dpkgOutput), "ii") {
@@ -67,7 +83,7 @@ func CheckDotNetRuntime6() (bool, string, error) {
 			return false, runtimes, nil
 		}
 	}
-	return hasNet6, runtimes, nil
+	return hasRequired, runtimes, nil
 }
 func GetInstalledDotNetRuntimes() ([]string, error) {
 	cmd := exec.Command("dotnet", "--list-runtimes")
@@ -105,6 +121,15 @@ func DetectLinuxDistro() (string, error) {
 	return "unknown", nil
 }
 func GetDotNet6InstallCommand() ([]string, error) {
+	return GetDotNetInstallCommand("6.0")
+}
+func GetDotNetInstallCommand(required string) ([]string, error) {
+	required = strings.TrimSpace(required)
+	if required == "" {
+		required = "6.0"
+	}
+	packageName := "dotnet-runtime-" + required
+	downloadURL := "https://dotnet.microsoft.com/download/dotnet/" + required
 	distro, err := DetectLinuxDistro()
 	if err != nil {
 		distro = "unknown"
@@ -112,25 +137,25 @@ func GetDotNet6InstallCommand() ([]string, error) {
 	switch distro {
 	case "ubuntu", "debian":
 		return []string{
-			"# Ubuntu/Debian 安装 .NET 6.0 Runtime（自动化模式，无交互提示）",
+			"# Ubuntu/Debian 安装 .NET " + required + " Runtime（自动化模式，无交互提示）",
 			"sudo apt-get update",
-			"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y dotnet-runtime-6.0",
+			"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y " + packageName,
 			"",
 			"# 验证安装",
 			"dotnet --list-runtimes",
 		}, nil
 	case "centos", "rhel":
 		return []string{
-			"# CentOS/RHEL 安装 .NET 6.0 Runtime",
-			"sudo yum install -y dotnet-runtime-6.0",
+			"# CentOS/RHEL 安装 .NET " + required + " Runtime",
+			"sudo yum install -y " + packageName,
 			"",
 			"# 验证安装",
 			"dotnet --list-runtimes",
 		}, nil
 	case "fedora":
 		return []string{
-			"# Fedora 安装 .NET 6.0 Runtime",
-			"sudo dnf install -y dotnet-runtime-6.0",
+			"# Fedora 安装 .NET " + required + " Runtime",
+			"sudo dnf install -y " + packageName,
 			"",
 			"# 验证安装",
 			"dotnet --list-runtimes",
@@ -138,8 +163,8 @@ func GetDotNet6InstallCommand() ([]string, error) {
 	default:
 		return []string{
 			"# 通用安装方法",
-			"# 访问：https://dotnet.microsoft.com/download/dotnet/6.0",
-			"# 下载并安装 .NET 6.0 Runtime",
+			"# 访问：" + downloadURL,
+			"# 下载并安装 .NET " + required + " Runtime",
 		}, nil
 	}
 }

@@ -59,6 +59,32 @@ curl -o tr.sh https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh &
 
 运行后选择 **`[0] 下载并启动`**，默认访问端口：**`8800`**
 
+**服务器非交互一键安装**
+
+发布后可以直接执行下面一条命令。它会下载指定版本、保留已有 `data` / 世界 / 备份、创建或更新 systemd 服务，并通过本机 HTTP 检查后再报告成功：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShourGG/tr-panel-go/main/tr.sh -o /tmp/tr.sh && chmod +x /tmp/tr.sh && /tmp/tr.sh --install --port 8800 --version v1.5.1-dev.8
+```
+
+如果使用 GitHub 直连较慢，把 `--version` 后的标签换成已发布的版本即可；不要把 `80`、`443` 或已被其他程序占用的 `7500` 当作面板端口。
+
+### 本地构建与发布
+
+仓库保存 Go 后端和已构建的嵌入前端；前端源码在配套前端工作区时，通过 `-FrontendDir` 指定它。构建脚本会运行 Go 全量测试、前端类型检查和 Vite 构建，将前端同步到 `web/dist`，再生成 Linux `amd64` 单文件和 `SHA256SUMS`：
+
+```powershell
+.\tools\build-release.ps1 `
+  -Version v1.5.1-dev.8 `
+  -FrontendDir 'D:\path\to\frontend'
+git add .
+git commit -m "feat: add unified room console commands"
+git push origin main
+.\tools\publish-release.ps1 -Version v1.5.1-dev.8
+```
+
+`publish-release.ps1` 使用本机已登录的 GitHub CLI 创建 prerelease，并上传 `terraria-panel` 与校验文件。稳定版发布时加上 `-Stable`。
+
 ---
 
 ## 界面预览

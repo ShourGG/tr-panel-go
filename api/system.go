@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"terraria-panel/buildinfo"
 	"terraria-panel/config"
 	"terraria-panel/models"
 	"terraria-panel/utils"
@@ -662,7 +663,7 @@ func getDiskInfo() ([]gin.H, float64) {
 }
 
 func getPanelVersion() string {
-	return "1.5.1-dev.7"
+	return buildinfo.Version
 }
 
 func normalizeUpdateChannel(channel string) string {

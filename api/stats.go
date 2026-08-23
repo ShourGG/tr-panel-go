@@ -238,7 +238,7 @@ func GetPlayerList(c *gin.Context) {
 
 	query := `
 		SELECT 
-			p.id, p.name, p.ip, p.room_id, p.status, p.is_banned, p.created_at,
+			p.id, p.name, COALESCE(p.ip, ''), p.room_id, p.status, p.is_banned, p.created_at,
 			r.name as room_name,
 			COALESCE(ps.total_play_time, 0) as total_play_time,
 			COALESCE(ps.login_count, 0) as login_count,

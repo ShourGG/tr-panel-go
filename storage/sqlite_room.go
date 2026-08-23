@@ -1,12 +1,15 @@
 package storage
+
 import (
 	"database/sql"
 	"terraria-panel/models"
 	"time"
 )
+
 type SQLiteRoomStorage struct {
 	db *sql.DB
 }
+
 func NewSQLiteRoomStorage(db *sql.DB) *SQLiteRoomStorage {
 	return &SQLiteRoomStorage{db: db}
 }
@@ -14,7 +17,7 @@ func (s *SQLiteRoomStorage) GetAll() ([]models.Room, error) {
 	query := `
 		SELECT id, name, server_type, world_file, port, max_players,
 		       password, mod_profile, COALESCE(world_size, 'medium'), COALESCE(difficulty, 'normal'),
-		       COALESCE(evil_type, 'corruption'), status, pid, start_time, COALESCE(admin_token, ''), created_at, updated_at
+		       COALESCE(evil_type, 'corruption'), COALESCE(seed, ''), status, pid, start_time, COALESCE(admin_token, ''), created_at, updated_at
 		FROM rooms
 		ORDER BY id
 	`
@@ -30,7 +33,7 @@ func (s *SQLiteRoomStorage) GetAll() ([]models.Room, error) {
 		err := rows.Scan(
 			&room.ID, &room.Name, &room.ServerType, &room.WorldFile,
 			&room.Port, &room.MaxPlayers, &room.Password, &room.ModProfile,
-			&room.WorldSize, &room.Difficulty, &room.EvilType,
+			&room.WorldSize, &room.Difficulty, &room.EvilType, &room.Seed,
 			&room.Status, &room.PID, &startTime, &room.AdminToken, &room.CreatedAt, &room.UpdatedAt,
 		)
 		if err != nil {
@@ -47,7 +50,7 @@ func (s *SQLiteRoomStorage) GetByID(id int) (*models.Room, error) {
 	query := `
 		SELECT id, name, server_type, world_file, port, max_players,
 		       password, mod_profile, COALESCE(world_size, 'medium'), COALESCE(difficulty, 'normal'),
-		       COALESCE(evil_type, 'corruption'), status, pid, start_time, COALESCE(admin_token, ''), created_at, updated_at
+		       COALESCE(evil_type, 'corruption'), COALESCE(seed, ''), status, pid, start_time, COALESCE(admin_token, ''), created_at, updated_at
 		FROM rooms
 		WHERE id = ?
 	`
@@ -56,7 +59,7 @@ func (s *SQLiteRoomStorage) GetByID(id int) (*models.Room, error) {
 	err := s.db.QueryRow(query, id).Scan(
 		&room.ID, &room.Name, &room.ServerType, &room.WorldFile,
 		&room.Port, &room.MaxPlayers, &room.Password, &room.ModProfile,
-		&room.WorldSize, &room.Difficulty, &room.EvilType,
+		&room.WorldSize, &room.Difficulty, &room.EvilType, &room.Seed,
 		&room.Status, &room.PID, &startTime, &room.AdminToken, &room.CreatedAt, &room.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -72,9 +75,9 @@ func (s *SQLiteRoomStorage) GetByID(id int) (*models.Room, error) {
 }
 func (s *SQLiteRoomStorage) Create(room *models.Room) error {
 	query := `
-		INSERT INTO rooms (name, server_type, world_file, port, max_players, password, mod_profile, 
-		                  world_size, difficulty, evil_type, status, pid)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO rooms (name, server_type, world_file, port, max_players, password, mod_profile,
+		                  world_size, difficulty, evil_type, seed, status, pid)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	if room.WorldSize == "" {
 		room.WorldSize = "medium"
@@ -89,7 +92,7 @@ func (s *SQLiteRoomStorage) Create(room *models.Room) error {
 		query,
 		room.Name, room.ServerType, room.WorldFile, room.Port,
 		room.MaxPlayers, room.Password, room.ModProfile,
-		room.WorldSize, room.Difficulty, room.EvilType,
+		room.WorldSize, room.Difficulty, room.EvilType, room.Seed,
 		room.Status, room.PID,
 	)
 	if err != nil {
@@ -108,13 +111,15 @@ func (s *SQLiteRoomStorage) Update(room *models.Room) error {
 	query := `
 		UPDATE rooms
 		SET name = ?, server_type = ?, world_file = ?, port = ?, max_players = ?,
-		    password = ?, mod_profile = ?, updated_at = CURRENT_TIMESTAMP
+		    password = ?, mod_profile = ?, world_size = ?, difficulty = ?, evil_type = ?, seed = ?,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
 	_, err := s.db.Exec(
 		query,
 		room.Name, room.ServerType, room.WorldFile, room.Port,
-		room.MaxPlayers, room.Password, room.ModProfile, room.ID,
+		room.MaxPlayers, room.Password, room.ModProfile, room.WorldSize,
+		room.Difficulty, room.EvilType, room.Seed, room.ID,
 	)
 	return err
 }

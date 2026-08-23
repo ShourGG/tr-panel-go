@@ -37,7 +37,7 @@
 set -e
 
 # 脚本版本
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.5.0"
 
 # 定义变量
 INSTALL_DIR="/opt/tr-panel"
@@ -55,6 +55,9 @@ MIRRORS=(
 
 # 当前选中的镜像索引（默认 0 = xs.shour.ccwu.cc:5678）
 MIRROR_IDX=0
+VERSION_OVERRIDE=""
+BACKUP_BINARY=""
+BACKUP_SERVICE=""
 
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
@@ -172,6 +175,11 @@ get_latest_version() {
     local api_base=$(get_mirror_api)
     load_update_channel
 
+    if [ -n "$VERSION_OVERRIDE" ]; then
+        echo "$VERSION_OVERRIDE"
+        return 0
+    fi
+
     if [ "$UPDATE_CHANNEL" = "dev" ]; then
         local response
         response=$(timeout 15 curl -s --connect-timeout 5 --max-time 15 \
@@ -239,6 +247,26 @@ check_root() {
         echo -e "${RED}错误: 请使用 root 用户或 sudo 运行此脚本${NC}"
         exit 1
     fi
+}
+
+validate_port() {
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+        echo -e "${RED}错误: 端口必须是 1-65535 之间的数字${NC}"
+        exit 2
+    fi
+}
+
+rollback_install() {
+    echo -e "${RED}安装后的健康检查失败，开始恢复旧版本...${NC}"
+    if [ -n "$BACKUP_BINARY" ] && [ -f "$BACKUP_BINARY" ]; then
+        cp -f "$BACKUP_BINARY" "$INSTALL_DIR/tr-panel"
+        chmod +x "$INSTALL_DIR/tr-panel"
+    fi
+    if [ -n "$BACKUP_SERVICE" ] && [ -f "$BACKUP_SERVICE" ]; then
+        cp -f "$BACKUP_SERVICE" "/etc/systemd/system/${SERVICE_NAME}.service"
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart "$SERVICE_NAME" 2>/dev/null || true
 }
 
 # 版本比较函数
@@ -319,10 +347,11 @@ show_menu() {
 # 下载并启动
 install_service() {
     check_root
+    validate_port
     load_update_channel
-    echo -e "${GREEN}[1/5] 创建安装目录...${NC}"
-    mkdir -p $INSTALL_DIR
-    cd $INSTALL_DIR
+    echo -e "${GREEN}[1/6] 创建安装目录并保留现有数据...${NC}"
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/rollback"
+    cd "$INSTALL_DIR"
 
     VERSION=$(get_latest_version || true)
     if [ -z "$VERSION" ]; then
@@ -330,21 +359,39 @@ install_service() {
         exit 1
     fi
     DOWNLOAD_URL=$(get_release_download_url "$VERSION" "terraria-panel")
-    echo -e "${GREEN}[2/5] 下载 TR Panel ${VERSION}...${NC}"
+    echo -e "${GREEN}[2/6] 下载 TR Panel ${VERSION}...${NC}"
     echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${NC}"
     if command -v wget &> /dev/null; then
-        wget -O tr-panel "$DOWNLOAD_URL"
+        wget -q --show-progress -O tr-panel.new "$DOWNLOAD_URL"
     elif command -v curl &> /dev/null; then
-        curl -L -o tr-panel "$DOWNLOAD_URL"
+        curl -fL --retry 3 -o tr-panel.new "$DOWNLOAD_URL"
     else
         echo -e "${RED}错误: 需要安装 wget 或 curl${NC}"
         exit 1
     fi
+    if [ ! -s tr-panel.new ]; then
+        echo -e "${RED}错误: 下载的二进制为空${NC}"
+        rm -f tr-panel.new
+        exit 1
+    fi
 
-    echo -e "${GREEN}[3/5] 设置执行权限...${NC}"
-    chmod +x tr-panel
+    echo -e "${GREEN}[3/6] 备份旧二进制并原子替换...${NC}"
+    if [ -f tr-panel ]; then
+        BACKUP_BINARY="$INSTALL_DIR/rollback/tr-panel.$(date +%Y%m%d_%H%M%S).bak"
+        cp -f tr-panel "$BACKUP_BINARY"
+    else
+        BACKUP_BINARY=""
+    fi
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        BACKUP_SERVICE="$INSTALL_DIR/rollback/${SERVICE_NAME}.$(date +%Y%m%d_%H%M%S).service.bak"
+        cp -f "/etc/systemd/system/${SERVICE_NAME}.service" "$BACKUP_SERVICE"
+    else
+        BACKUP_SERVICE=""
+    fi
+    chmod +x tr-panel.new
+    mv -f tr-panel.new tr-panel
 
-    echo -e "${GREEN}[4/5] 创建 systemd 服务...${NC}"
+    echo -e "${GREEN}[4/6] 创建 systemd 服务...${NC}"
     # 生成随机 JWT_SECRET（若服务文件已存在则复用旧密钥）
     EXISTING_SECRET=$(grep 'JWT_SECRET=' /etc/systemd/system/${SERVICE_NAME}.service 2>/dev/null | cut -d'"' -f2 | cut -d'=' -f2)
     if [ -n "$EXISTING_SECRET" ]; then
@@ -373,10 +420,25 @@ WantedBy=multi-user.target
 EOF
     echo "$UPDATE_CHANNEL" > "$CHANNEL_FILE"
 
-    echo -e "${GREEN}[5/5] 启动服务...${NC}"
+    echo -e "${GREEN}[5/6] 启动服务...${NC}"
     systemctl daemon-reload
     systemctl enable $SERVICE_NAME
-    systemctl start $SERVICE_NAME
+    systemctl restart $SERVICE_NAME 2>/dev/null || systemctl start $SERVICE_NAME
+
+    echo -e "${GREEN}[6/6] 等待服务健康...${NC}"
+    HEALTHY=0
+    for _ in $(seq 1 20); do
+        if systemctl is-active --quiet "$SERVICE_NAME" && curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+            HEALTHY=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$HEALTHY" -ne 1 ]; then
+        rollback_install
+        echo -e "${RED}错误: 面板服务启动失败，查看 journalctl -u ${SERVICE_NAME}${NC}"
+        exit 1
+    fi
 
     echo ""
     echo -e "${GREEN}=========================================${NC}"
@@ -467,8 +529,7 @@ update_panel() {
 force_update() {
     check_root
     echo -e "${YELLOW}强制更新面板...${NC}"
-    systemctl stop $SERVICE_NAME
-    rm -rf $INSTALL_DIR
+    # 保留 data、rooms、servers、backups 和 JWT_SECRET；安装流程会原子替换二进制。
     install_service
 }
 
@@ -540,6 +601,49 @@ uninstall() {
         echo -e "${GREEN}卸载完成${NC}"
     fi
 }
+
+# 非交互安装：wget/curl 后直接执行 ./tr.sh --install --port 8800
+if [ "${1:-}" = "--install" ] || [ "${TR_PANEL_AUTO_INSTALL:-}" = "1" ]; then
+    shift || true
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --port)
+                if [ "$#" -lt 2 ]; then
+                    echo -e "${RED}错误: --port 需要一个端口值${NC}"
+                    exit 2
+                fi
+                PORT="$2"
+                shift 2
+                ;;
+            --port=*)
+                PORT="${1#*=}"
+                shift
+                ;;
+            --version)
+                if [ "$#" -lt 2 ]; then
+                    echo -e "${RED}错误: --version 需要一个版本标签${NC}"
+                    exit 2
+                fi
+                VERSION_OVERRIDE="$2"
+                shift 2
+                ;;
+            --version=*)
+                VERSION_OVERRIDE="${1#*=}"
+                shift
+                ;;
+            --mirror=*)
+                MIRROR_IDX="${1#*=}"
+                shift
+                ;;
+            *)
+                echo -e "${RED}未知参数: $1${NC}"
+                exit 2
+                ;;
+        esac
+    done
+    install_service
+    exit 0
+fi
 
 # 主循环
 while true; do

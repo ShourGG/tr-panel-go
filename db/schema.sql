@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     world_size TEXT DEFAULT 'medium',
     difficulty TEXT DEFAULT 'normal',
     evil_type TEXT DEFAULT 'corruption',
+    seed TEXT DEFAULT '',
     status TEXT DEFAULT 'stopped',
     pid INTEGER DEFAULT 0,
     start_time DATETIME,
