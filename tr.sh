@@ -265,6 +265,7 @@ download_release_binary() {
     local downloaded=0
     local downloaded_idx="$original_idx"
     local idx
+    local base_url
     local url
 
     for idx in "$original_idx" $(seq 0 $((${#MIRRORS[@]} - 1))); do
@@ -272,7 +273,8 @@ download_release_binary() {
             continue
         fi
         MIRROR_IDX="$idx"
-        url=$(get_release_download_url "$version" "terraria-panel")
+        base_url=$(get_release_download_url "$version" "terraria-panel")
+        url="${base_url}?nocache=$(date +%s%N 2>/dev/null || date +%s)"
         echo -e "${BLUE}下载地址: ${url}${NC}"
         if download_file "$url" "$output"; then
             downloaded=1
@@ -289,9 +291,10 @@ download_release_binary() {
     fi
 
     local checksum_file="${output}.sha256"
+    local checksum_base_url
     local checksum_url
     MIRROR_IDX="$downloaded_idx"
-    checksum_url=$(get_release_download_url "$version" "SHA256SUMS")
+    checksum_base_url=$(get_release_download_url "$version" "SHA256SUMS")
     if ! command -v sha256sum >/dev/null 2>&1; then
         echo -e "${YELLOW}警告: 无法下载 SHA256SUMS，继续使用已下载的二进制${NC}"
         rm -f "$checksum_file"
@@ -303,6 +306,7 @@ download_release_binary() {
     local checksum_available=0
     local verification_attempt
     for verification_attempt in 1 2 3; do
+        checksum_url="${checksum_base_url}?nocache=$(date +%s%N 2>/dev/null || date +%s)"
         if ! download_file "$checksum_url" "$checksum_file"; then
             break
         fi
@@ -316,8 +320,11 @@ download_release_binary() {
             return 0
         fi
         echo -e "${YELLOW}SHA-256 校验失败（第 ${verification_attempt}/3 次），重新下载二进制...${NC}"
-        if [ "$verification_attempt" -lt 3 ] && ! download_file "$url" "$output"; then
-            break
+        if [ "$verification_attempt" -lt 3 ]; then
+            url="${base_url}?nocache=$(date +%s%N 2>/dev/null || date +%s)"
+            if ! download_file "$url" "$output"; then
+                break
+            fi
         fi
     done
 
