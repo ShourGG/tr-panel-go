@@ -1,0 +1,1 @@
+import{c as s}from"./index-DrA-IvmR.js";import{d as t,k as a,U as e,u as o,Z as r,l as d}from"./vue-vendor-49U8zmVC.js";const m=t({__name:"CardDescription",setup:t=>(t,m)=>(d(),a("p",{class:e(o(s)("text-sm text-muted-foreground",t.$attrs.class??""))},[r(t.$slots,"default")],2))});export{m as _};

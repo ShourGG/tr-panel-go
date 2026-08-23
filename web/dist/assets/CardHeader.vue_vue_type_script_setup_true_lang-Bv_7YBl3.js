@@ -1,1 +1,0 @@
-import{c as s}from"./Button-DHUVjXr2.js";import{d as a,k as e,M as t,u as o,Z as r,l}from"./vue-vendor-C-hk4M4e.js";const c=a({__name:"CardHeader",setup:a=>(a,c)=>(l(),e("div",{class:t(o(s)("flex flex-col space-y-1.5 p-6",a.$attrs.class??""))},[r(a.$slots,"default")],2))});export{c as _};

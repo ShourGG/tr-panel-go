@@ -1,1 +1,0 @@
-import{c as s}from"./Button-DHUVjXr2.js";import{d as t,k as a,M as o,u as e,Z as r,l as m}from"./vue-vendor-C-hk4M4e.js";const u=t({__name:"CardDescription",setup:t=>(t,u)=>(m(),a("p",{class:o(e(s)("text-sm text-muted-foreground",t.$attrs.class??""))},[r(t.$slots,"default")],2))});export{u as _};
