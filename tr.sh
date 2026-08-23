@@ -594,12 +594,15 @@ update_script() {
     SCRIPT_URL="$(get_raw_url 'tr.sh')?nocache=$(date +%s)"
     echo -e "${BLUE}下载地址: ${SCRIPT_URL}${NC}"
     SCRIPT_PATH=$(realpath "$0")
-    if command -v wget &> /dev/null; then
-        wget -q -O "$SCRIPT_PATH" "$SCRIPT_URL"
-    elif command -v curl &> /dev/null; then
-        curl -sL -o "$SCRIPT_PATH" "$SCRIPT_URL"
+    SCRIPT_TMP="${SCRIPT_PATH}.new"
+    if download_file "$SCRIPT_URL" "$SCRIPT_TMP"; then
+        chmod +x "$SCRIPT_TMP"
+        mv -f "$SCRIPT_TMP" "$SCRIPT_PATH"
+    else
+        rm -f "$SCRIPT_TMP"
+        echo -e "${RED}错误: 脚本下载失败，保留当前脚本${NC}"
+        exit 1
     fi
-    chmod +x "$SCRIPT_PATH"
     echo -e "${GREEN}脚本已更新至最新版本，请重新运行: $SCRIPT_PATH${NC}"
     exit 0
 }
