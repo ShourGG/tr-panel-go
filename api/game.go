@@ -43,6 +43,7 @@ type GamePackageSpec struct {
 	DownloadURL   string
 	TargetDir     string
 	LatestVersion string
+	VersionCode   string
 	UpdateChannel string
 	RuntimeMajor  string
 }
@@ -662,12 +663,9 @@ func GetInstallProgress(c *gin.Context) {
 }
 func checkVanillaInstalled() bool {
 	vanillaDir := filepath.Join(config.ServersDir, "vanilla")
-	if info, err := os.Stat(vanillaDir); err == nil && info.IsDir() {
-		files, err := os.ReadDir(vanillaDir)
-		if err == nil && len(files) > 0 {
-			fmt.Printf("[检测] Vanilla已安装，目录包含 %d 个文件\n", len(files))
-			return true
-		}
+	if serverPath, err := findVanillaServerBinary(vanillaDir); err == nil {
+		fmt.Printf("[检测] Vanilla已安装，服务端程序: %s\n", serverPath)
+		return true
 	}
 	fmt.Printf("[检测] Vanilla未安装\n")
 	return false
@@ -1041,12 +1039,25 @@ func installGameServer(gameType string, selectedVersionCode ...string) {
 			sourceDir = windowsDir
 		}
 		if _, err := os.Stat(sourceDir); err == nil {
-			moveFiles(sourceDir, targetDir)
-			os.RemoveAll(filepath.Join(targetDir, versionFolder))
+			if err := moveFiles(sourceDir, targetDir); err != nil {
+				sendError(fmt.Sprintf("整理原版服务端文件失败: %v", err))
+				return
+			}
+			if err := os.RemoveAll(filepath.Join(targetDir, versionFolder)); err != nil {
+				sendError(fmt.Sprintf("清理原版版本目录失败: %v", err))
+				return
+			}
+		}
+		terrariaServer, err := findVanillaServerBinary(targetDir)
+		if err != nil {
+			sendError(err.Error())
+			return
 		}
 		if runtime.GOOS == "linux" {
-			terrariaServer := filepath.Join(targetDir, "TerrariaServer")
-			os.Chmod(terrariaServer, 0755)
+			if err := os.Chmod(terrariaServer, 0755); err != nil {
+				sendError(fmt.Sprintf("设置原版服务端执行权限失败: %v", err))
+				return
+			}
 		}
 		if err := writeInstalledVersionMarker(gameType, targetDir, resolvedVersion); err != nil {
 			sendError(fmt.Sprintf("写入版本标记失败: %v", err))
@@ -1170,7 +1181,7 @@ func updateGameServer(gameType string, createBackup bool) {
 		return
 	}
 
-	if err := finalizePreparedGameFiles(gameType, extractDir, spec.LatestVersion, sendProgress); err != nil {
+	if err := finalizePreparedGameFiles(gameType, extractDir, spec.VersionCode, spec.LatestVersion, sendProgress); err != nil {
 		sendError(err.Error())
 		return
 	}
@@ -1498,6 +1509,7 @@ func resolveGamePackageSpec(gameType string) (GamePackageSpec, error) {
 			DownloadURL:   option.DownloadURL,
 			TargetDir:     filepath.Join(config.ServersDir, "vanilla"),
 			LatestVersion: option.Version,
+			VersionCode:   option.Code,
 			UpdateChannel: "vanilla",
 		}, nil
 	case "tmodloader":
@@ -1605,6 +1617,103 @@ func getInstalledGameVersion(gameType string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func vanillaServerBinaryNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"TerrariaServer.exe", "TerrariaServer"}
+	}
+	return []string{"TerrariaServer.bin.x86_64", "TerrariaServer"}
+}
+
+func hasVanillaServerBinary(dir string) bool {
+	for _, name := range vanillaServerBinaryNames() {
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func findVanillaPlatformDir(targetDir, versionCode string) (string, error) {
+	platform := "Linux"
+	if runtime.GOOS == "windows" {
+		platform = "Windows"
+	}
+
+	candidates := make([]string, 0, len(supportedVanillaVersionCodes)+2)
+	addCandidate := func(path string) {
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+	if strings.TrimSpace(versionCode) != "" {
+		addCandidate(filepath.Join(targetDir, strings.TrimSpace(versionCode), platform))
+	}
+	for _, code := range supportedVanillaVersionCodes {
+		addCandidate(filepath.Join(targetDir, code, platform))
+	}
+	addCandidate(filepath.Join(targetDir, platform))
+
+	for _, candidate := range candidates {
+		if hasVanillaServerBinary(candidate) {
+			return candidate, nil
+		}
+	}
+
+	var found string
+	err := filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && strings.EqualFold(info.Name(), platform) && hasVanillaServerBinary(path) {
+			found = path
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found == "" {
+		return "", fmt.Errorf("未找到原版 %s 服务端文件，请检查下载包是否完整", platform)
+	}
+	return found, nil
+}
+
+func findVanillaServerBinary(targetDir string) (string, error) {
+	for _, name := range vanillaServerBinaryNames() {
+		path := filepath.Join(targetDir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+
+	platformDir, err := findVanillaPlatformDir(targetDir, "")
+	if err != nil {
+		return "", err
+	}
+	for _, name := range vanillaServerBinaryNames() {
+		path := filepath.Join(platformDir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("未找到原版服务端程序")
+}
+
+func isVanillaVersionDir(dir, targetDir, versionCode string) bool {
+	if dir == targetDir {
+		return false
+	}
+	base := filepath.Base(dir)
+	if strings.TrimSpace(versionCode) != "" && base == strings.TrimSpace(versionCode) {
+		return true
+	}
+	return len(base) == 4 && strings.Trim(base, "0123456789") == ""
 }
 
 func isGameInstalledForType(gameType string) bool {
@@ -1808,24 +1917,33 @@ func downloadAndExtractGamePackage(gameType, downloadURL, targetDir string, send
 	return nil
 }
 
-func finalizePreparedGameFiles(gameType, targetDir, resolvedVersion string, sendProgress func(string, int)) error {
+func finalizePreparedGameFiles(gameType, targetDir, versionCode, resolvedVersion string, sendProgress func(string, int)) error {
 	switch gameType {
 	case "vanilla":
 		sendProgress("整理原版服务端文件", 78)
-		linuxDir := filepath.Join(targetDir, "1449", "Linux")
-		windowsDir := filepath.Join(targetDir, "1449", "Windows")
-		sourceDir := windowsDir
-		if runtime.GOOS == "linux" {
-			sourceDir = linuxDir
-		}
-		if _, err := os.Stat(sourceDir); err == nil {
+		sourceDir, sourceErr := findVanillaPlatformDir(targetDir, versionCode)
+		if sourceErr == nil {
 			if err := moveFiles(sourceDir, targetDir); err != nil {
-				return err
+				return fmt.Errorf("整理原版服务端文件失败: %v", err)
 			}
-			_ = os.RemoveAll(filepath.Join(targetDir, "1449"))
+			versionDir := filepath.Dir(sourceDir)
+			if isVanillaVersionDir(versionDir, targetDir, versionCode) {
+				if err := os.RemoveAll(versionDir); err != nil {
+					return fmt.Errorf("清理原版版本目录失败: %v", err)
+				}
+			}
+		}
+		serverPath, err := findVanillaServerBinary(targetDir)
+		if err != nil {
+			if sourceErr != nil {
+				return sourceErr
+			}
+			return err
 		}
 		if runtime.GOOS == "linux" {
-			_ = os.Chmod(filepath.Join(targetDir, "TerrariaServer"), 0755)
+			if err := os.Chmod(serverPath, 0755); err != nil {
+				return fmt.Errorf("设置原版服务端执行权限失败: %v", err)
+			}
 		}
 	case "tmodloader":
 		sendProgress("配置 tModLoader 运行环境", 82)

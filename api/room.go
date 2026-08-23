@@ -532,6 +532,7 @@ func StartRoom(c *gin.Context) {
 	}
 	var command string
 	var args []string
+	var vanillaServerWorkDir string
 	switch room.ServerType {
 	case "tmodloader":
 		tmodDir := filepath.Join(config.ServersDir, "tModLoader")
@@ -721,9 +722,9 @@ func StartRoom(c *gin.Context) {
 		}
 	case "vanilla":
 		vanillaDir := filepath.Join(config.ServersDir, "vanilla")
-		serverBin := filepath.Join(vanillaDir, "TerrariaServer.bin.x86_64")
-		if _, err := os.Stat(serverBin); os.IsNotExist(err) {
-			log.Printf("[ERROR] Vanilla服务器文件不存在: %s", serverBin)
+		serverBin, err := findVanillaServerBinary(vanillaDir)
+		if err != nil {
+			log.Printf("[ERROR] Vanilla服务器文件不存在: %v", err)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(
 				"Vanilla服务器未安装。请先在【游戏安装】页面安装Vanilla服务器"))
 			return
@@ -731,6 +732,7 @@ func StartRoom(c *gin.Context) {
 		if err := os.Chmod(serverBin, 0755); err != nil {
 			log.Printf("[WARN] 无法设置执行权限: %v", err)
 		}
+		vanillaServerWorkDir = filepath.Dir(serverBin)
 		configDir := filepath.Join(config.DataDir, "configs")
 		os.MkdirAll(configDir, 0755)
 		configPath := filepath.Join(configDir, fmt.Sprintf("room-%d-config.txt", room.ID))
@@ -997,7 +999,7 @@ seed=%s
 		workDir = filepath.Join(config.ServersDir, "tModLoader")
 		log.Printf("[INFO] tModLoader 工作目录: %s", workDir)
 	case "vanilla":
-		workDir = filepath.Join(config.ServersDir, "vanilla")
+		workDir = vanillaServerWorkDir
 	case "tshock":
 		workDir = roomTshockDir
 		log.Printf("[INFO] TShock 工作目录: %s (房间独立 tshock 目录)", workDir)

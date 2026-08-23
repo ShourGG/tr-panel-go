@@ -11,6 +11,7 @@ type Config struct {
 	Port                      string
 	Env                       string
 	UpdateChannel             string
+	SteamAPIKey               string
 	UseGitHubMirror           bool
 	GitHubMirrorURL           string
 	DownloadRetries           int
@@ -55,6 +56,7 @@ func Load() *Config {
 		Port:                      getEnv("PORT", "8800"),
 		Env:                       getEnv("ENV", "development"),
 		UpdateChannel:             getEnv("UPDATE_CHANNEL", "stable"),
+		SteamAPIKey:               getEnv("STEAM_API_KEY", ""),
 		UseGitHubMirror:           useGitHubMirror,
 		GitHubMirrorURL:           getEnv("GITHUB_MIRROR_URL", "https://ghfast.top/"),
 		DownloadRetries:           retries,

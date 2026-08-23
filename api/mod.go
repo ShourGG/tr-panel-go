@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	STEAM_API_KEY    = "0CC4D444D75574B25716B13C2C95258B"
 	TMODLOADER_APPID = "1281930"
 )
 
@@ -590,26 +589,47 @@ func scoreWorkshopSearchCandidate(title, description string, tags []string, quer
 }
 
 func fetchSteamWorkshopQueryPage(queryType string, apiPage, apiPageSize int, query string) (steamWorkshopQueryResponse, error) {
-	apiURL := fmt.Sprintf(
-		"https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key=%s&query_type=%s&page=%d&numperpage=%d&appid=%s&return_tags=true&return_vote_data=true&return_previews=true&return_short_description=true",
-		STEAM_API_KEY, queryType, apiPage, apiPageSize, TMODLOADER_APPID,
-	)
-	if query != "" {
-		apiURL += "&search_text=" + url.QueryEscape(query)
-	}
-
-	steamClient := &http.Client{Timeout: 15 * time.Second}
-	resp, err := steamClient.Get(apiURL)
+	cfg := config.Load()
+	apiURL, err := buildSteamWorkshopQueryURL(cfg.SteamAPIKey, queryType, apiPage, apiPageSize, query)
 	if err != nil {
 		return steamWorkshopQueryResponse{}, err
 	}
+
+	steamClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := steamClient.Get(apiURL)
+	if err != nil {
+		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop 网络请求失败")
+	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop API 返回 HTTP %d", resp.StatusCode)
+	}
 
 	var result steamWorkshopQueryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return steamWorkshopQueryResponse{}, err
+		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop API 返回数据格式无效")
 	}
 	return result, nil
+}
+
+func buildSteamWorkshopQueryURL(apiKey, queryType string, apiPage, apiPageSize int, query string) (string, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return "", fmt.Errorf("未配置 Steam Workshop API key，请设置 STEAM_API_KEY")
+	}
+	params := url.Values{}
+	params.Set("key", strings.TrimSpace(apiKey))
+	params.Set("query_type", queryType)
+	params.Set("page", strconv.Itoa(apiPage))
+	params.Set("numperpage", strconv.Itoa(apiPageSize))
+	params.Set("appid", TMODLOADER_APPID)
+	params.Set("return_tags", "true")
+	params.Set("return_vote_data", "true")
+	params.Set("return_previews", "true")
+	params.Set("return_short_description", "true")
+	if query != "" {
+		params.Set("search_text", query)
+	}
+	return "https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?" + params.Encode(), nil
 }
 
 func GetMods(c *gin.Context) {
@@ -921,14 +941,27 @@ func InstallMod(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
+	req.WorkshopID = strings.TrimSpace(req.WorkshopID)
+	if req.WorkshopID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Workshop ID 不能为空"))
+		return
+	}
+	downloadingMutex.Lock()
+	if downloadingMods[req.WorkshopID] {
+		downloadingMutex.Unlock()
+		c.JSON(http.StatusConflict, models.ErrorResponse("该 MOD 正在下载中，请勿重复提交"))
+		return
+	}
+	downloadingMods[req.WorkshopID] = true
+	downloadingMutex.Unlock()
 	log.Printf("接收下载请求: WorkshopID=%s, Name=%s, PreviewURL=%s", req.WorkshopID, req.Name, req.PreviewURL)
 	c.JSON(http.StatusOK, models.MessageResponse(fmt.Sprintf("开始下载 MOD: %s", req.Name)))
 	go func() {
-		downloadingMutex.Lock()
-		downloadingMods[req.WorkshopID] = true
-		downloadingMutex.Unlock()
 		updateModProgressState(req.WorkshopID, req.Name, "downloading", "准备下载...", 0)
-		log.Printf("已添加到下载列表: %s (当前下载数: %d)", req.WorkshopID, len(downloadingMods))
+		downloadingMutex.RLock()
+		activeDownloads := len(downloadingMods)
+		downloadingMutex.RUnlock()
+		log.Printf("已添加到下载列表: %s (当前下载数: %d)", req.WorkshopID, activeDownloads)
 		defer func() {
 			downloadingMutex.Lock()
 			delete(downloadingMods, req.WorkshopID)

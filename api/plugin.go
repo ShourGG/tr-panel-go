@@ -234,7 +234,7 @@ func TogglePlugin(c *gin.Context) {
 	}
 }
 func getPluginsDir(roomID int) string {
-	return filepath.Join(config.DataDir, "servers", fmt.Sprintf("tshock-%d", roomID), "ServerPlugins")
+	return filepath.Join(config.DataDir, "rooms", fmt.Sprintf("room-%d", roomID), "tshock", "ServerPlugins")
 }
 func scanPluginsDir(dir string, enabled bool) ([]models.Plugin, error) {
 	var plugins []models.Plugin
@@ -408,9 +408,15 @@ func GetPluginInstallProgress(c *gin.Context) {
 }
 func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.DownloadProgress) error {
 	cacheDir := filepath.Join(config.DataDir, PluginsCacheDir)
-	os.MkdirAll(cacheDir, 0755)
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create plugin cache directory: %v", err)
+	}
 	zipPath := filepath.Join(cacheDir, "Plugins.zip")
-	extractDir := filepath.Join(cacheDir, "extracted")
+	extractDir, err := os.MkdirTemp(cacheDir, "plugin-extract-")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary extraction directory: %v", err)
+	}
+	defer os.RemoveAll(extractDir)
 	needDownload := true
 	if fileInfo, err := os.Stat(zipPath); err == nil {
 		if time.Since(fileInfo.ModTime()) < 24*time.Hour {
@@ -438,13 +444,15 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 	progress.Progress = 70
 	progress.Message = "Installing plugin..."
 	progress.Progress = 80
-	pluginDLL := pluginID + ".dll"
-	srcPath := filepath.Join(extractDir, pluginDLL)
-	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-		return fmt.Errorf("plugin %s not found in package", pluginID)
+	srcPath, err := findPluginDLL(extractDir, pluginID)
+	if err != nil {
+		return err
 	}
 	pluginsDir := getPluginsDir(roomID)
-	os.MkdirAll(pluginsDir, 0755)
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create room plugin directory: %v", err)
+	}
+	pluginDLL := filepath.Base(srcPath)
 	destPath := filepath.Join(pluginsDir, pluginDLL)
 	if err := copyFile(srcPath, destPath); err != nil {
 		return fmt.Errorf("failed to install plugin: %v", err)
@@ -452,6 +460,36 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 	progress.Progress = 100
 	progress.Message = "Plugin installed successfully"
 	return nil
+}
+
+func findPluginDLL(extractDir, pluginID string) (string, error) {
+	wanted := strings.TrimSpace(filepath.Base(pluginID))
+	if strings.EqualFold(filepath.Ext(wanted), ".dll") {
+		wanted = strings.TrimSuffix(wanted, filepath.Ext(wanted))
+	}
+	if wanted == "" {
+		return "", fmt.Errorf("plugin ID is empty")
+	}
+	wanted += ".dll"
+
+	var found string
+	err := filepath.Walk(extractDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.EqualFold(info.Name(), wanted) {
+			found = path
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to scan plugin package: %v", err)
+	}
+	if found == "" {
+		return "", fmt.Errorf("plugin %s not found in package", pluginID)
+	}
+	return found, nil
 }
 func downloadPluginFileWithProgress(url, destPath string, progress *models.DownloadProgress) error {
 	client := &http.Client{
