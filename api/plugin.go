@@ -13,6 +13,7 @@ import (
 	"sync"
 	"terraria-panel/config"
 	"terraria-panel/models"
+	"terraria-panel/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,11 +27,6 @@ const (
 	PluginsCacheDuration   = 72 * time.Hour
 )
 
-var githubMirrors = []string{
-	"https://ghfast.top/",
-	"https://cors.isteed.cc/",
-	"https://gh.noki.icu/",
-}
 var (
 	downloadProgress = make(map[string]*models.DownloadProgress)
 	progressMutex    sync.RWMutex
@@ -429,9 +425,8 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 		progress.Message = "Downloading plugin package..."
 		progress.Progress = 10
 		cfg := config.Load()
-		downloadURL := buildPluginZipURL(cfg)
-		fmt.Printf("[Plugin Install] Downloading from: %s\n", downloadURL)
-		if err := downloadPluginFileWithProgress(downloadURL, zipPath, progress); err != nil {
+		downloadURLs := buildPluginZipURLs(cfg)
+		if err := downloadPluginPackage(downloadURLs, zipPath, progress); err != nil {
 			return fmt.Errorf("failed to download plugin package: %v", err)
 		}
 		progress.Progress = 50
@@ -460,6 +455,23 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 	progress.Progress = 100
 	progress.Message = "Plugin installed successfully"
 	return nil
+}
+
+func downloadPluginPackage(urls []string, destPath string, progress *models.DownloadProgress) error {
+	var lastErr error
+	for index, downloadURL := range urls {
+		fmt.Printf("[Plugin Install] Downloading from %d/%d: %s\n", index+1, len(urls), downloadURL)
+		if err := downloadPluginFileWithProgress(downloadURL, destPath, progress); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			_ = os.Remove(destPath)
+		}
+	}
+	if lastErr == nil {
+		return fmt.Errorf("plugin package has no configured download URL")
+	}
+	return lastErr
 }
 
 func findPluginDLL(extractDir, pluginID string) (string, error) {
@@ -633,33 +645,21 @@ func fetchPluginStoreFromGitHub() ([]models.PluginStoreItem, error) {
 	return nil, fmt.Errorf("failed to fetch plugin store from all sources (tried %d URLs): %v", len(urls), lastErr)
 }
 func buildPluginStoreURLs(cfg *config.Config) []string {
-	urls := []string{}
-	if cfg.UseGitHubMirror {
-		if cfg.GitHubMirrorURL != "" && cfg.GitHubMirrorURL != "https://ghproxy.com/" {
-			urls = append(urls, cfg.GitHubMirrorURL+PluginsJSONURLOriginal)
-		}
-		for _, mirror := range githubMirrors {
-			mirrorURL := mirror + PluginsJSONURLOriginal
-			isDuplicate := false
-			for _, existing := range urls {
-				if existing == mirrorURL {
-					isDuplicate = true
-					break
-				}
-			}
-			if !isDuplicate {
-				urls = append(urls, mirrorURL)
-			}
-		}
-	}
-	urls = append(urls, PluginsJSONURLOriginal)
-	return urls
+	return utils.BuildDownloadURLs(
+		PluginsJSONURLOriginal,
+		cfg.UseGitHubMirror,
+		cfg.GitHubMirrorURL,
+		cfg.GitHubMirrorAllowedRepos,
+	)
 }
-func buildPluginZipURL(cfg *config.Config) string {
-	if cfg.UseGitHubMirror && cfg.GitHubMirrorURL != "" {
-		return cfg.GitHubMirrorURL + PluginsZipURLOriginal
-	}
-	return PluginsZipURLOriginal
+
+func buildPluginZipURLs(cfg *config.Config) []string {
+	return utils.BuildDownloadURLs(
+		PluginsZipURLOriginal,
+		cfg.UseGitHubMirror,
+		cfg.GitHubMirrorURL,
+		cfg.GitHubMirrorAllowedRepos,
+	)
 }
 func fetchPluginStoreFromURL(url string) ([]models.PluginStoreItem, error) {
 	client := &http.Client{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"terraria-panel/config"
@@ -12,18 +13,19 @@ import (
 )
 
 type DownloadOptions struct {
-	URL             string
-	FilePath        string
-	OnProgress      func(int)
-	Retries         int
-	Timeout         time.Duration
-	UseGitHubMirror bool
-	MirrorURL       string
+	URL                string
+	FilePath           string
+	OnProgress         func(int)
+	Retries            int
+	Timeout            time.Duration
+	UseGitHubMirror    bool
+	MirrorURL          string
+	MirrorAllowedRepos []string
 }
 
 func DownloadWithRetry(opts DownloadOptions) error {
 	var lastErr error
-	urls := getDownloadURLs(opts.URL, opts.UseGitHubMirror, opts.MirrorURL)
+	urls := BuildDownloadURLs(opts.URL, opts.UseGitHubMirror, opts.MirrorURL, opts.MirrorAllowedRepos)
 	for attempt := 0; attempt <= opts.Retries; attempt++ {
 		for i, url := range urls {
 			if attempt > 0 || i > 0 {
@@ -42,28 +44,102 @@ func DownloadWithRetry(opts DownloadOptions) error {
 	}
 	return fmt.Errorf("download failed after %d retries: %v", opts.Retries, lastErr)
 }
-func getDownloadURLs(originalURL string, useGitHubMirror bool, mirrorURL string) []string {
-	urls := []string{}
-	if useGitHubMirror && isGitHubURL(originalURL) {
-		mirrors := []string{
-			"https://ghfast.top/",
-			"https://cors.isteed.cc/",
-			"https://gh.noki.icu/",
+
+var defaultGitHubMirrors = []string{
+	"https://ghfast.top/",
+	"https://cors.isteed.cc/",
+	"https://gh.noki.icu/",
+}
+
+// BuildDownloadURLs only sends approved GitHub repository URLs through a
+// mirror. The original URL is always kept as the final fallback.
+func BuildDownloadURLs(originalURL string, useGitHubMirror bool, mirrorURL string, allowedRepos []string) []string {
+	urls := make([]string, 0, len(defaultGitHubMirrors)+2)
+	seen := make(map[string]struct{})
+	appendURL := func(value string) {
+		if value == "" {
+			return
 		}
-		if mirrorURL != "" && mirrorURL != "https://ghfast.top/" {
-			mirrors = append([]string{mirrorURL}, mirrors...)
+		if _, exists := seen[value]; exists {
+			return
 		}
+		seen[value] = struct{}{}
+		urls = append(urls, value)
+	}
+
+	if useGitHubMirror && IsGitHubMirrorAllowedURL(originalURL, allowedRepos) {
+		mirrors := make([]string, 0, len(defaultGitHubMirrors)+1)
+		if normalized := normalizeMirrorURL(mirrorURL); normalized != "" {
+			mirrors = append(mirrors, normalized)
+		}
+		for _, candidate := range defaultGitHubMirrors {
+			if normalized := normalizeMirrorURL(candidate); normalized != "" {
+				mirrors = append(mirrors, normalized)
+			}
+		}
+
 		for _, mirror := range mirrors {
-			mirrorURL := mirror + originalURL
-			urls = append(urls, mirrorURL)
+			appendURL(mirror + originalURL)
 		}
 	}
-	urls = append(urls, originalURL)
+
+	appendURL(originalURL)
 	return urls
 }
-func isGitHubURL(url string) bool {
-	return strings.Contains(url, "github.com") ||
-		strings.Contains(url, "githubusercontent.com")
+
+func IsGitHubMirrorAllowedURL(rawURL string, allowedRepos []string) bool {
+	repo, ok := githubRepositoryFromURL(rawURL)
+	if !ok {
+		return false
+	}
+
+	if len(allowedRepos) == 0 {
+		allowedRepos = []string{"ShourGG/tr-panel-go"}
+	}
+
+	for _, allowed := range allowedRepos {
+		if strings.EqualFold(strings.TrimSpace(allowed), repo) {
+			return true
+		}
+	}
+	return false
+}
+
+func githubRepositoryFromURL(rawURL string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "github.com", "raw.githubusercontent.com":
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+			return "", false
+		}
+		return strings.ToLower(parts[0] + "/" + parts[1]), true
+	case "api.github.com":
+		if len(parts) < 3 || !strings.EqualFold(parts[0], "repos") || parts[1] == "" || parts[2] == "" {
+			return "", false
+		}
+		return strings.ToLower(parts[1] + "/" + parts[2]), true
+	default:
+		return "", false
+	}
+}
+
+func normalizeMirrorURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ""
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	if !strings.HasSuffix(parsed.Path, "/") {
+		parsed.Path += "/"
+	}
+	return parsed.String()
 }
 func downloadFile(url string, filepath string, onProgress func(int), timeout time.Duration) error {
 	client := &http.Client{
@@ -216,12 +292,13 @@ func sanitizePreview(data []byte) string {
 }
 func GetDownloadConfig(cfg *config.Config, url string, filepath string, onProgress func(int)) DownloadOptions {
 	return DownloadOptions{
-		URL:             url,
-		FilePath:        filepath,
-		OnProgress:      onProgress,
-		Retries:         cfg.DownloadRetries,
-		Timeout:         time.Duration(cfg.DownloadTimeout) * time.Second,
-		UseGitHubMirror: cfg.UseGitHubMirror,
-		MirrorURL:       cfg.GitHubMirrorURL,
+		URL:                url,
+		FilePath:           filepath,
+		OnProgress:         onProgress,
+		Retries:            cfg.DownloadRetries,
+		Timeout:            time.Duration(cfg.DownloadTimeout) * time.Second,
+		UseGitHubMirror:    cfg.UseGitHubMirror,
+		MirrorURL:          cfg.GitHubMirrorURL,
+		MirrorAllowedRepos: cfg.GitHubMirrorAllowedRepos,
 	}
 }

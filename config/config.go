@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -14,6 +15,7 @@ type Config struct {
 	SteamAPIKey               string
 	UseGitHubMirror           bool
 	GitHubMirrorURL           string
+	GitHubMirrorAllowedRepos  []string
 	DownloadRetries           int
 	DownloadTimeout           int
 	EnableMultiThread         bool
@@ -59,6 +61,7 @@ func Load() *Config {
 		SteamAPIKey:               getEnv("STEAM_API_KEY", ""),
 		UseGitHubMirror:           useGitHubMirror,
 		GitHubMirrorURL:           getEnv("GITHUB_MIRROR_URL", "https://ghfast.top/"),
+		GitHubMirrorAllowedRepos:  parseCommaSeparated(getEnv("GITHUB_MIRROR_ALLOWED_REPOS", "ShourGG/tr-panel-go")),
 		DownloadRetries:           retries,
 		DownloadTimeout:           timeout,
 		EnableMultiThread:         enableMultiThread,
@@ -78,6 +81,18 @@ func Load() *Config {
 		R2PublicBaseURL:           getEnv("R2_PUBLIC_BASE_URL", ""),
 		R2Endpoint:                getEnv("R2_ENDPOINT", ""),
 	}
+}
+
+func parseCommaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }
 
 func mustParseEnvInt(key string, defaultValue int) int {

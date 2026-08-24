@@ -4,9 +4,11 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -54,7 +56,10 @@ var (
 	workshopCache    = make(map[string]*workshopCacheEntry)
 	workshopCacheMu  sync.RWMutex
 	workshopCacheTTL = 30 * time.Minute
+	workshopStaleTTL = 7 * 24 * time.Hour
 )
+
+var steamWorkshopHTTPClient = &http.Client{}
 
 func workshopCacheDir() string {
 	return filepath.Join(config.DataDir, "cache", "workshop")
@@ -102,25 +107,44 @@ func setWorkshopCache(key string, data []byte) {
 }
 
 func getWorkshopDiskCache(key string) ([]byte, bool) {
+	entry, ok := readWorkshopDiskCacheEntry(key)
+	if !ok || time.Since(entry.CachedAt) > workshopCacheTTL {
+		return nil, false
+	}
+	return append([]byte(nil), entry.Data...), true
+}
+
+func getWorkshopStaleCache(key string) ([]byte, time.Time, bool) {
+	workshopCacheMu.RLock()
+	entry, ok := workshopCache[key]
+	workshopCacheMu.RUnlock()
+	if ok && !entry.cachedAt.IsZero() && time.Since(entry.cachedAt) <= workshopStaleTTL {
+		return append([]byte(nil), entry.data...), entry.cachedAt, true
+	}
+
+	diskEntry, ok := readWorkshopDiskCacheEntry(key)
+	if !ok || time.Since(diskEntry.CachedAt) > workshopStaleTTL {
+		return nil, time.Time{}, false
+	}
+	return append([]byte(nil), diskEntry.Data...), diskEntry.CachedAt, true
+}
+
+func readWorkshopDiskCacheEntry(key string) (workshopDiskCacheEntry, bool) {
 	cachePath := workshopCacheFilePath(key)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		return nil, false
+		return workshopDiskCacheEntry{}, false
 	}
 
 	var entry workshopDiskCacheEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		_ = os.Remove(cachePath)
-		return nil, false
+		return workshopDiskCacheEntry{}, false
 	}
-	if entry.CachedAt.IsZero() || time.Since(entry.CachedAt) > workshopCacheTTL || len(entry.Data) == 0 {
-		if !entry.CachedAt.IsZero() && time.Since(entry.CachedAt) > workshopCacheTTL {
-			_ = os.Remove(cachePath)
-		}
-		return nil, false
+	if entry.CachedAt.IsZero() || len(entry.Data) == 0 {
+		return workshopDiskCacheEntry{}, false
 	}
-
-	return append([]byte(nil), entry.Data...), true
+	return entry, true
 }
 
 func setWorkshopDiskCache(key string, data []byte) {
@@ -160,7 +184,7 @@ func cleanupWorkshopDiskCache(cacheDir string) {
 		return
 	}
 
-	cutoff := time.Now().Add(-workshopCacheTTL)
+	cutoff := time.Now().Add(-workshopStaleTTL)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -595,21 +619,62 @@ func fetchSteamWorkshopQueryPage(queryType string, apiPage, apiPageSize int, que
 		return steamWorkshopQueryResponse{}, err
 	}
 
-	steamClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := steamClient.Get(apiURL)
-	if err != nil {
-		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop 网络请求失败")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop API 返回 HTTP %d", resp.StatusCode)
+	const attempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+		if requestErr != nil {
+			cancel()
+			return steamWorkshopQueryResponse{}, fmt.Errorf("无法创建 Steam Workshop 请求")
+		}
+		req.Header.Set("User-Agent", "Terraria-Panel/1.0")
+
+		resp, requestErr := steamWorkshopHTTPClient.Do(req)
+		if requestErr != nil {
+			cancel()
+			lastErr = classifySteamWorkshopRequestError(requestErr)
+		} else {
+			if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+				status := resp.StatusCode
+				_ = resp.Body.Close()
+				cancel()
+				lastErr = fmt.Errorf("Steam Workshop API 返回 HTTP %d", status)
+				if status != http.StatusTooManyRequests && status < http.StatusInternalServerError {
+					return steamWorkshopQueryResponse{}, lastErr
+				}
+			} else {
+				var result steamWorkshopQueryResponse
+				decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+				_ = resp.Body.Close()
+				cancel()
+				if decodeErr != nil {
+					return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop API 返回数据格式无效")
+				}
+				return result, nil
+			}
+		}
+
+		if attempt < attempts {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
 	}
 
-	var result steamWorkshopQueryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return steamWorkshopQueryResponse{}, fmt.Errorf("Steam Workshop API 返回数据格式无效")
+	if lastErr == nil {
+		lastErr = fmt.Errorf("Steam Workshop 网络请求失败")
 	}
-	return result, nil
+	return steamWorkshopQueryResponse{}, lastErr
+}
+
+func classifySteamWorkshopRequestError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("Steam Workshop 请求超时，请稍后重试")
+	}
+	var netErr interface{ Timeout() bool }
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("Steam Workshop 请求超时，请稍后重试")
+	}
+	return fmt.Errorf("Steam Workshop 网络请求失败")
 }
 
 func buildSteamWorkshopQueryURL(apiKey, queryType string, apiPage, apiPageSize int, query string) (string, error) {
@@ -751,7 +816,7 @@ func SearchWorkshopMods(c *gin.Context) {
 		for apiPage := 1; apiPage <= pagesNeeded; apiPage++ {
 			pageResult, err := fetchSteamWorkshopQueryPage(queryType, apiPage, apiPageSize, query)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
+				respondWorkshopSearchFailure(c, cacheKey, err)
 				return
 			}
 			if apiPage == 1 {
@@ -765,7 +830,7 @@ func SearchWorkshopMods(c *gin.Context) {
 	} else {
 		pageResult, err := fetchSteamWorkshopQueryPage(queryType, pageInt, pageSizeInt, query)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Steam API 请求失败: "+err.Error()))
+			respondWorkshopSearchFailure(c, cacheKey, err)
 			return
 		}
 		result = pageResult
@@ -904,6 +969,26 @@ func SearchWorkshopMods(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, responseData)
 }
+
+func respondWorkshopSearchFailure(c *gin.Context, cacheKey string, requestErr error) {
+	if cached, cachedAt, ok := getWorkshopStaleCache(cacheKey); ok {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(cached, &payload); err == nil {
+			if data, ok := payload["data"].(map[string]interface{}); ok {
+				data["stale"] = true
+				data["warning"] = "Steam Workshop 当前不可用，已显示缓存结果。"
+				data["cachedAt"] = cachedAt.Format(time.RFC3339)
+				if response, err := json.Marshal(payload); err == nil {
+					c.Header("X-Workshop-Cache", "stale")
+					c.Data(http.StatusOK, "application/json", response)
+					return
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Steam Workshop 查询失败: "+requestErr.Error()))
+}
 func GetDownloadingMods(c *gin.Context) {
 	downloadingMutex.RLock()
 	defer downloadingMutex.RUnlock()
@@ -979,33 +1064,26 @@ func InstallMod(c *gin.Context) {
 		modDir := filepath.Join(config.DataDir, "tModLoader", "Mods")
 		os.MkdirAll(modDir, 0755)
 		log.Printf("开始下载 MOD: %s (Workshop ID: %s)", req.Name, req.WorkshopID)
+		_, steamcmdReady, _, _, steamcmdStateMessage := getSteamCMDState()
+		if !steamcmdReady {
+			log.Printf("SteamCMD 不可用，开始一键准备: %s", steamcmdStateMessage)
+			updateModProgressState(req.WorkshopID, req.Name, "downloading", "正在准备 SteamCMD 和 Workshop 组件...", 2)
+			if err := prepareSteamCMD(func(step, total int, stepName string) {
+				progress := 2 + step*12/total
+				message := fmt.Sprintf("正在准备 SteamCMD：%s", stepName)
+				updateModProgressState(req.WorkshopID, req.Name, "downloading", message, progress)
+				BroadcastModProgress(req.WorkshopID, message)
+			}); err != nil {
+				errMsg := fmt.Sprintf("SteamCMD 一键准备失败: %v", err)
+				log.Printf("%s", errMsg)
+				BroadcastModProgress(req.WorkshopID, "下载失败: "+errMsg)
+				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
+				return
+			}
+		}
 		steamcmdPath := filepath.Join(config.DataDir, "steamcmd", "steamcmd.sh")
 		if runtime.GOOS == "windows" {
 			steamcmdPath = filepath.Join(config.DataDir, "steamcmd", "steamcmd.exe")
-		}
-		_, steamcmdReady, _, _, steamcmdStateMessage := getSteamCMDState()
-		if !steamcmdReady {
-			log.Printf("SteamCMD 不可用，开始安装/修复: %s", steamcmdStateMessage)
-			if err := installSteamCMD(); err != nil {
-				errMsg := fmt.Sprintf("SteamCMD安装失败: %v", err)
-				if runtime.GOOS == "linux" {
-					errMsg += "\n\n请手动安装依赖：\nsudo dpkg --add-architecture i386\nsudo apt-get update\nsudo apt-get install lib32gcc-s1 lib32stdc++6"
-				}
-				log.Printf("%s", errMsg)
-				BroadcastModProgress(req.WorkshopID, "下载失败: "+errMsg)
-				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
-				return
-			}
-		}
-		if runtime.GOOS == "linux" {
-			depCheckCmd := exec.Command("dpkg", "-l", "lib32gcc-s1")
-			if err := depCheckCmd.Run(); err != nil {
-				errMsg := "缺少 32 位运行库，请先执行：\nsudo dpkg --add-architecture i386\nsudo apt-get update\nsudo apt-get install lib32gcc-s1 lib32stdc++6"
-				log.Printf("%s", errMsg)
-				BroadcastModProgress(req.WorkshopID, "下载失败: "+errMsg)
-				scheduleModProgressCleanup(req.WorkshopID, 15*time.Second)
-				return
-			}
 		}
 		workshopDirs := []string{
 			filepath.Join(config.DataDir, "steamcmd", "steamapps", "workshop", "content", "1281930", req.WorkshopID),
