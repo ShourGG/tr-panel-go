@@ -477,6 +477,13 @@ func roomWorldSizeValue(raw string) string {
 	}
 }
 
+func roomAutocreateValue(worldExists bool, rawWorldSize string) string {
+	if worldExists {
+		return "0"
+	}
+	return roomWorldSizeValue(rawWorldSize)
+}
+
 func roomDifficultyValue(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "expert", "1":
@@ -776,18 +783,15 @@ func StartRoom(c *gin.Context) {
 		os.MkdirAll(configDir, 0755)
 		configPath := filepath.Join(configDir, fmt.Sprintf("room-%d-config.txt", room.ID))
 		worldName := strings.TrimSuffix(room.WorldFile, ".wld")
-		autocreateValue := 0
-		if !worldExists {
-			autocreateValue = 2
-		}
-		log.Printf("[INFO] 世界存在: %v, autocreate: %d", worldExists, autocreateValue)
+		autocreateValue := roomAutocreateValue(worldExists, room.WorldSize)
+		log.Printf("[INFO] 世界存在: %v, autocreate: %s", worldExists, autocreateValue)
 		configContent := fmt.Sprintf(`maxplayers=%d
 world=%s
 worldpath=%s/
 port=%d
 password=%s
 worldname=%s
-autocreate=%d
+autocreate=%s
 difficulty=%s
 worldevil=%s
 worldrollbackstokeep=10
@@ -935,10 +939,7 @@ seed=%s
 		configPath := filepath.Join(configDir, fmt.Sprintf("room-%d-tshock.properties", room.ID))
 		worldPath := filepath.Join(roomDir, room.WorldFile)
 		worldName := strings.TrimSuffix(room.WorldFile, ".wld")
-		autocreateValue := 0
-		if _, err := os.Stat(worldPath); os.IsNotExist(err) {
-			autocreateValue = 2
-		}
+		autocreateValue := roomAutocreateValue(worldExists, room.WorldSize)
 		configContent := fmt.Sprintf(`# TShock Server Configuration - Room %d
 config=%s/
 world=%s
@@ -947,7 +948,7 @@ port=%d
 maxplayers=%d
 password=%s
 worldname=%s
-autocreate=%d
+autocreate=%s
 difficulty=%s
 worldevil=%s
 language=zh-Hans
