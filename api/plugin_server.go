@@ -145,6 +145,15 @@ func isFullConfigurationComplete(ps *models.PluginServer) bool {
 }
 func StartPluginServer(c *gin.Context) {
 	log.Printf("[INFO] Starting plugin server...")
+	installation := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+	if !installation.Installed {
+		c.JSON(http.StatusConflict, models.ErrorResponse("TShock 安装尚未完成："+installation.Message))
+		return
+	}
+	if err := validateEnabledTShockPlugins(services.GetPluginServerPluginsDir()); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse("插件兼容性检查失败："+err.Error()))
+		return
+	}
 	pluginServer, err := pluginServerService.GetPluginServer()
 	if err != nil {
 		log.Printf("[ERROR] Failed to get plugin server: %v", err)
@@ -460,6 +469,10 @@ func UploadPluginServerPlugin(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := validateUploadedPluginForCurrentTShock(file); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
 
 	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败: "+err.Error()))
@@ -534,6 +547,10 @@ func TogglePluginServerPlugin(c *gin.Context) {
 			c.JSON(http.StatusNotFound, models.ErrorResponse("Plugin not found in disabled directory"))
 			return
 		}
+		if err := validatePluginFileForCurrentTShock(srcPath); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
 		if err := moveFile(srcPath, destPath); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to enable plugin"))
 			return
@@ -582,6 +599,10 @@ func CopyPluginServerPluginToRoom(c *gin.Context) {
 	srcPath := filepath.Join(services.GetPluginServerPluginsDir(), pluginName)
 	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("共享插件不存在: "+pluginName))
+		return
+	}
+	if err := validatePluginFileForCurrentTShock(srcPath); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 		return
 	}
 

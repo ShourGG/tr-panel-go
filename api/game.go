@@ -3,10 +3,12 @@ package api
 import (
 	"archive/tar"
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -348,8 +350,9 @@ func GetGameInstallInfo(c *gin.Context) {
 	tshock6RuntimeHealth := assessDotNetRuntimeHealth("9.0")
 	vanillaInstalled := checkVanillaInstalled()
 	tmodInstalled := checkTModLoaderInstalled()
-	tshock5Installed := checkTShockInstalled() && !isTShock6()
-	tshock6Installed := checkTShockInstalled() && isTShock6()
+	tshockInstallation := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+	tshock5Installed := tshockInstallation.Installed && tshockInstallation.Version == "5"
+	tshock6Installed := tshockInstallation.Installed && tshockInstallation.Version == "6"
 	vanillaInstalledVersion, _ := getInstalledGameVersion("vanilla")
 	tmodInstalledVersion, _ := getInstalledGameVersion("tmodloader")
 	tshock5InstalledVersion, _ := getInstalledGameVersion("tshock5")
@@ -398,42 +401,50 @@ func GetGameInstallInfo(c *gin.Context) {
 				"recommendedVersionCode": tmodRecommended.TagName,
 			},
 			"tshock5": gin.H{
-				"name":             "TShock 5 稳定版",
-				"version":          tshock5Info.Version,
-				"path":             filepath.Join(config.ServersDir, "tshock"),
-				"downloadUrl":      tshock5Info.DownloadURL,
-				"size":             "约 24 MB",
-				"installed":        tshock5Installed,
-				"installedVersion": tshock5InstalledVersion,
-				"latestVersion":    tshock5Info.Version,
-				"updateAvailable":  tshock5Installed && isGameUpdateAvailable(tshock5InstalledVersion, tshock5Info.Version),
-				"updateSupported":  true,
-				"updateChannel":    "tshock5",
-				"requiresNet":      tshock5Info.RuntimeMajor,
-				"releaseVersion":   tshock5Info.Version,
-				"terrariaVersion":  tshock5Info.TerrariaVersion,
-				"publishedAt":      tshock5Info.PublishedAt,
-				"prerelease":       tshock5Info.Prerelease,
-				"runtimeHealth":    tshock5RuntimeHealth,
+				"name":                 "TShock 5 稳定版",
+				"version":              tshock5Info.Version,
+				"path":                 filepath.Join(config.ServersDir, "tshock"),
+				"downloadUrl":          tshock5Info.DownloadURL,
+				"size":                 "约 24 MB",
+				"installed":            tshock5Installed,
+				"installedVersion":     tshock5InstalledVersion,
+				"latestVersion":        tshock5Info.Version,
+				"updateAvailable":      tshock5Installed && isGameUpdateAvailable(tshock5InstalledVersion, tshock5Info.Version),
+				"updateSupported":      true,
+				"updateChannel":        "tshock5",
+				"requiresNet":          tshock5Info.RuntimeMajor,
+				"releaseVersion":       tshock5Info.Version,
+				"terrariaVersion":      tshock5Info.TerrariaVersion,
+				"publishedAt":          tshock5Info.PublishedAt,
+				"prerelease":           tshock5Info.Prerelease,
+				"runtimeHealth":        tshock5RuntimeHealth,
+				"installationState":    tshockInstallation.State,
+				"detectionMessage":     tshockInstallation.Message,
+				"detectedVersion":      tshockInstallation.Version,
+				"installationComplete": tshockInstallation.Complete,
 			},
 			"tshock6": gin.H{
-				"name":             "TShock 6 新版稳定版",
-				"version":          tshock6Info.Version,
-				"path":             filepath.Join(config.ServersDir, "tshock"),
-				"downloadUrl":      tshock6Info.DownloadURL,
-				"size":             "约 25 MB",
-				"installed":        tshock6Installed,
-				"installedVersion": tshock6InstalledVersion,
-				"latestVersion":    tshock6Info.Version,
-				"updateAvailable":  tshock6Installed && isGameUpdateAvailable(tshock6InstalledVersion, tshock6Info.Version),
-				"updateSupported":  true,
-				"updateChannel":    "tshock6",
-				"requiresNet":      tshock6Info.RuntimeMajor,
-				"releaseVersion":   tshock6Info.Version,
-				"terrariaVersion":  tshock6Info.TerrariaVersion,
-				"publishedAt":      tshock6Info.PublishedAt,
-				"prerelease":       tshock6Info.Prerelease,
-				"runtimeHealth":    tshock6RuntimeHealth,
+				"name":                 "TShock 6 新版稳定版",
+				"version":              tshock6Info.Version,
+				"path":                 filepath.Join(config.ServersDir, "tshock"),
+				"downloadUrl":          tshock6Info.DownloadURL,
+				"size":                 "约 25 MB",
+				"installed":            tshock6Installed,
+				"installedVersion":     tshock6InstalledVersion,
+				"latestVersion":        tshock6Info.Version,
+				"updateAvailable":      tshock6Installed && isGameUpdateAvailable(tshock6InstalledVersion, tshock6Info.Version),
+				"updateSupported":      true,
+				"updateChannel":        "tshock6",
+				"requiresNet":          tshock6Info.RuntimeMajor,
+				"releaseVersion":       tshock6Info.Version,
+				"terrariaVersion":      tshock6Info.TerrariaVersion,
+				"publishedAt":          tshock6Info.PublishedAt,
+				"prerelease":           tshock6Info.Prerelease,
+				"runtimeHealth":        tshock6RuntimeHealth,
+				"installationState":    tshockInstallation.State,
+				"detectionMessage":     tshockInstallation.Message,
+				"detectedVersion":      tshockInstallation.Version,
+				"installationComplete": tshockInstallation.Complete,
 			},
 		},
 	})
@@ -683,33 +694,13 @@ func checkTModLoaderInstalled() bool {
 	return false
 }
 func checkTShockInstalled() bool {
-	tshockDir := filepath.Join(config.ServersDir, "tshock")
-	if info, err := os.Stat(tshockDir); err != nil || !info.IsDir() {
-		fmt.Printf("[检测] TShock目录不存在\n")
-		return false
-	}
-	coreFiles := []string{
-		"TShock.Server",
-		"TShock.Server.dll",
-	}
-	for _, file := range coreFiles {
-		filePath := filepath.Join(tshockDir, file)
-		if _, err := os.Stat(filePath); err == nil {
-			fmt.Printf("[检测] TShock已安装，找到核心文件: %s\n", file)
-			return true
-		}
-	}
-	fmt.Printf("[检测] TShock未安装（核心程序文件不存在）\n")
-	return false
+	detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+	fmt.Printf("[检测] TShock 状态: %s (%s)\n", detection.State, detection.Message)
+	return detection.Installed
 }
 func isTShock6() bool {
-	if version := readTShockVersionMarker(); version != "" {
-		isV6 := version == "6" || strings.HasPrefix(version, "6.")
-		fmt.Printf("[检测] TShock 版本标记: %s (是否为6: %v)\n", version, isV6)
-		return isV6
-	}
-	fmt.Printf("[检测] 未找到版本标记文件，默认为 TShock 5\n")
-	return false
+	detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+	return detection.Installed && detection.Version == "6"
 }
 func sendInstallProgress(gameType string, message string, progress int) {
 	setActiveGameTask(gameType, "install", message, progress)
@@ -882,6 +873,24 @@ func installGameServer(gameType string, selectedVersionCode ...string) {
 		targetDir = filepath.Join(config.ServersDir, "tshock")
 	} else {
 		fmt.Printf("不支持的游戏类型: %s\n", gameType)
+		return
+	}
+	if gameType == "tshock5" || gameType == "tshock6" {
+		if err := installTShockServerAtomically(gameType, downloadUrl, resolvedVersion, targetDir, sendProgress); err != nil {
+			sendError(err.Error())
+			return
+		}
+		sendProgress("安装完成", 100)
+		fmt.Printf("%s 安装完成\n", gameType)
+		completeMsg := map[string]interface{}{
+			"type":     "install_complete",
+			"gameType": gameType,
+			"message":  "安装成功完成",
+		}
+		if jsonData, err := json.Marshal(completeMsg); err == nil {
+			BroadcastMessage(jsonData)
+		}
+		clearActiveGameTask(gameType)
 		return
 	}
 	sendProgress("创建目录", 5)
@@ -1135,6 +1144,136 @@ func installGameServer(gameType string, selectedVersionCode ...string) {
 		fmt.Println("[WebSocket] 完成消息已广播")
 	}
 	clearActiveGameTask(gameType)
+}
+
+func installTShockServerAtomically(gameType, downloadURL, resolvedVersion, targetDir string, sendProgress func(string, int)) error {
+	if gameType != "tshock5" && gameType != "tshock6" {
+		return fmt.Errorf("无效的 TShock 安装类型: %s", gameType)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetDir), 0755); err != nil {
+		return fmt.Errorf("创建 TShock 服务端目录失败: %w", err)
+	}
+
+	stageDir, err := os.MkdirTemp(filepath.Dir(targetDir), ".tshock-stage-")
+	if err != nil {
+		return fmt.Errorf("创建 TShock 隔离安装目录失败: %w", err)
+	}
+	defer os.RemoveAll(stageDir)
+
+	sendProgress("创建 TShock 隔离安装目录", 5)
+	if err := downloadAndExtractGamePackage(gameType, downloadURL, stageDir, sendProgress); err != nil {
+		return fmt.Errorf("下载或解压 TShock 安装包失败: %w", err)
+	}
+
+	// Only user data from an incomplete prior attempt is brought into the
+	// staged directory. Program files are always sourced from the new package.
+	if err := copyTShockUserData(targetDir, stageDir); err != nil {
+		return fmt.Errorf("保留已有 TShock 用户数据失败: %w", err)
+	}
+
+	if err := finalizePreparedGameFiles(gameType, stageDir, "", resolvedVersion, sendProgress); err != nil {
+		return fmt.Errorf("配置 TShock 运行环境失败: %w", err)
+	}
+	if err := writeInstalledVersionMarker(gameType, stageDir, resolvedVersion); err != nil {
+		return fmt.Errorf("写入 TShock 版本标记失败: %w", err)
+	}
+
+	expectedMajor := "5"
+	if gameType == "tshock6" {
+		expectedMajor = "6"
+	}
+	if err := validateStagedTShockInstallation(stageDir, expectedMajor); err != nil {
+		return err
+	}
+	if err := writeTShockInstallCompleteMarker(stageDir, resolvedVersion); err != nil {
+		return fmt.Errorf("写入 TShock 安装完成标记失败: %w", err)
+	}
+
+	sendProgress("验证完成，原子替换 TShock 安装目录", 96)
+	if err := replaceTShockInstallationDirectory(stageDir, targetDir); err != nil {
+		return fmt.Errorf("替换 TShock 安装目录失败: %w", err)
+	}
+	return nil
+}
+
+func validateStagedTShockInstallation(stageDir, expectedMajor string) error {
+	if !hasInstalledTShockBinary(stageDir) {
+		return fmt.Errorf("TShock 安装包不完整：未找到 TShock.Server 核心文件")
+	}
+
+	detection := detectInstalledTShockVersion(stageDir)
+	if !detection.Detected || detection.Version != expectedMajor {
+		return fmt.Errorf("TShock 版本验证失败：期望 TShock %s，实际检测为 %s（%s）", expectedMajor, detection.Version, detection.Message)
+	}
+
+	if runtime.GOOS == "linux" {
+		requiredRuntime := getRequiredDotNetRuntime(expectedMajor)
+		health := assessDotNetRuntimeHealth(requiredRuntime)
+		if !health.Healthy {
+			return fmt.Errorf("TShock %s 安装未完成：.NET %s Runtime 验证失败：%s", expectedMajor, requiredRuntime, health.Message)
+		}
+	}
+	return nil
+}
+
+func copyTShockUserData(existingDir, stageDir string) error {
+	info, err := os.Stat(existingDir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+
+	for _, name := range []string{"ServerPlugins", "tshock", "Worlds"} {
+		src := filepath.Join(existingDir, name)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if err := copyRecursive(src, filepath.Join(stageDir, name)); err != nil {
+			return err
+		}
+	}
+
+	entries, err := os.ReadDir(existingDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".wld") || strings.HasSuffix(strings.ToLower(name), ".twld") {
+			if err := copyRecursive(filepath.Join(existingDir, name), filepath.Join(stageDir, name)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func replaceTShockInstallationDirectory(stageDir, targetDir string) error {
+	previousDir := ""
+	if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+		previousDir = filepath.Join(filepath.Dir(targetDir), fmt.Sprintf(".tshock-previous-%d", time.Now().UnixNano()))
+		if err := os.Rename(targetDir, previousDir); err != nil {
+			return fmt.Errorf("移动旧安装目录失败: %w", err)
+		}
+	}
+
+	if err := os.Rename(stageDir, targetDir); err != nil {
+		if previousDir != "" {
+			if rollbackErr := os.Rename(previousDir, targetDir); rollbackErr != nil {
+				return fmt.Errorf("写入新安装目录失败: %v；回滚旧目录也失败: %v", err, rollbackErr)
+			}
+		}
+		return err
+	}
+
+	if previousDir != "" {
+		if err := os.RemoveAll(previousDir); err != nil {
+			log.Printf("[WARN] 无法清理已替换的 TShock 旧目录 %s: %v", previousDir, err)
+		}
+	}
+	return nil
 }
 
 func updateGameServer(gameType string, createBackup bool) {
@@ -1591,10 +1730,11 @@ func getInstalledGameVersion(gameType string) (string, bool) {
 		version := strings.TrimSpace(string(data))
 		return version, version != ""
 	case "tshock5":
-		if !checkTShockInstalled() || isTShock6() {
+		detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+		if !detection.Installed || detection.Version != "5" {
 			return "", false
 		}
-		version := readTShockVersionMarker()
+		version := detection.RawVersion
 		if version == "" || version == "5" {
 			return "", false
 		}
@@ -1603,10 +1743,11 @@ func getInstalledGameVersion(gameType string) (string, bool) {
 		}
 		return "", false
 	case "tshock6":
-		if !checkTShockInstalled() || !isTShock6() {
+		detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+		if !detection.Installed || detection.Version != "6" {
 			return "", false
 		}
-		version := readTShockVersionMarker()
+		version := detection.RawVersion
 		if version == "" || version == "6" {
 			return "", false
 		}
@@ -1723,9 +1864,11 @@ func isGameInstalledForType(gameType string) bool {
 	case "tmodloader":
 		return checkTModLoaderInstalled()
 	case "tshock5":
-		return checkTShockInstalled() && !isTShock6()
+		detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+		return detection.Installed && detection.Version == "5"
 	case "tshock6":
-		return checkTShockInstalled() && isTShock6()
+		detection := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
+		return detection.Installed && detection.Version == "6"
 	default:
 		return false
 	}
@@ -2401,7 +2544,10 @@ func UninstallGame(c *gin.Context) {
 	case "tmodloader":
 		installed = checkTModLoaderInstalled()
 	case "tshock", "tshock5", "tshock6":
-		installed = checkTShockInstalled()
+		tshockDir := filepath.Join(config.ServersDir, "tshock")
+		if info, err := os.Stat(tshockDir); err == nil && info.IsDir() {
+			installed = true
+		}
 	}
 	if !installed {
 		c.JSON(http.StatusOK, gin.H{
@@ -2790,21 +2936,56 @@ func runPackageManagerCommandWithRetry(gameType string, progress int, stepLabel 
 func runPackageManagerCommandWithRetryForAction(gameType, action string, progress int, stepLabel string, name string, args ...string) (string, error) {
 	const maxRetries = 24
 	const retryDelay = 5 * time.Second
+	const commandTimeout = 20 * time.Minute
 
 	var lastOutput string
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		cmd := exec.Command(name, args...)
+		startedAt := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+		cmd := exec.CommandContext(ctx, name, args...)
 		if name == "apt-get" {
 			cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		}
 
-		output, err := cmd.CombinedOutput()
-		lastOutput = string(output)
-		lastErr = err
+		type commandResult struct {
+			output []byte
+			err    error
+		}
+		resultCh := make(chan commandResult, 1)
+		go func() {
+			output, err := cmd.CombinedOutput()
+			resultCh <- commandResult{output: output, err: err}
+		}()
 
-		if err == nil {
+		ticker := time.NewTicker(30 * time.Second)
+		var result commandResult
+		for waiting := true; waiting; {
+			select {
+			case result = <-resultCh:
+				waiting = false
+			case <-ticker.C:
+				message := fmt.Sprintf("%s 正在执行，已等待 %s", stepLabel, time.Since(startedAt).Round(time.Second))
+				if action == "repair" {
+					sendRepairProgress(gameType, message, progress)
+				} else {
+					sendInstallProgress(gameType, message, progress)
+				}
+			}
+		}
+		ticker.Stop()
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+
+		lastOutput = string(result.output)
+		lastErr = result.err
+		if timedOut {
+			lastErr = fmt.Errorf("%s 执行超过 %s，已终止", stepLabel, commandTimeout)
+			lastOutput = strings.TrimSpace(lastOutput + "\n" + lastErr.Error())
+		}
+
+		if lastErr == nil {
 			return lastOutput, nil
 		}
 

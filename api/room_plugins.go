@@ -48,6 +48,10 @@ func AddRoomPlugin(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := validateUploadedPluginForCurrentTShock(file); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
 
 	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败: "+err.Error()))
@@ -112,6 +116,10 @@ func CopyPluginFromShared(c *gin.Context) {
 	srcPath := filepath.Join(sharedPluginsDir, req.PluginName)
 	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("共享插件不存在: "+req.PluginName))
+		return
+	}
+	if err := validatePluginFileForCurrentTShock(srcPath); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 		return
 	}
 

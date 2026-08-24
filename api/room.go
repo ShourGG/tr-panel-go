@@ -807,6 +807,11 @@ seed=%s
 		}
 	case "tshock":
 		tshockDir := filepath.Join(config.ServersDir, "tshock")
+		installation := inspectTShockInstallation(tshockDir)
+		if !installation.Installed {
+			c.JSON(http.StatusConflict, models.ErrorResponse("TShock 安装尚未完成："+installation.Message))
+			return
+		}
 		var exePath string
 		var useDotNet bool = false
 		linuxExe := filepath.Join(tshockDir, "TShock.Server")
@@ -962,9 +967,17 @@ seed=%s
 		roomPluginsDir := filepath.Join(roomTshockDir, "ServerPlugins")
 		sharedPluginsDir := filepath.Join(tshockDir, "ServerPlugins")
 		os.MkdirAll(roomPluginsDir, 0755)
+		if err := validateEnabledTShockPlugins(roomPluginsDir); err != nil {
+			c.JSON(http.StatusConflict, models.ErrorResponse("房间插件兼容性检查失败："+err.Error()))
+			return
+		}
 		roomPluginFiles, _ := os.ReadDir(roomPluginsDir)
 		if len(roomPluginFiles) == 0 {
 			log.Printf("[INFO] 房间插件目录为空，从共享目录复制默认插件...")
+			if err := validateEnabledTShockPlugins(sharedPluginsDir); err != nil {
+				c.JSON(http.StatusConflict, models.ErrorResponse("共享插件兼容性检查失败："+err.Error()))
+				return
+			}
 			if files, err := os.ReadDir(sharedPluginsDir); err == nil {
 				copiedCount := 0
 				for _, file := range files {

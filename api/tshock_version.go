@@ -17,16 +17,115 @@ type tshockVersionDetection struct {
 	Message    string
 }
 
+const tshockInstallCompleteMarker = ".tshock_install_complete"
+
+var tshockRuntimeInstalled = isRequiredDotNetRuntimeInstalled
+
+type tshockInstallationDetection struct {
+	State           string
+	Version         string
+	RawVersion      string
+	Installed       bool
+	Complete        bool
+	RuntimeReady    bool
+	VersionDetected bool
+	Message         string
+}
+
 func DetectTShockVersion(c *gin.Context) {
 	detection := detectInstalledTShockVersion(filepath.Join(config.ServersDir, "tshock"))
+	installation := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"version":  detection.Version,
-			"detected": detection.Detected,
-			"message":  detection.Message,
+			"version":           detection.Version,
+			"detected":          detection.Detected,
+			"message":           installation.Message,
+			"installationState": installation.State,
+			"installed":         installation.Installed,
+			"complete":          installation.Complete,
+			"runtimeReady":      installation.RuntimeReady,
 		},
 	})
+}
+
+func inspectTShockInstallation(tshockPath string) tshockInstallationDetection {
+	info, err := os.Stat(tshockPath)
+	if err != nil || !info.IsDir() {
+		return tshockInstallationDetection{
+			State:   "not-installed",
+			Version: "unknown",
+			Message: "未检测到 TShock 安装目录",
+		}
+	}
+
+	if !hasInstalledTShockBinary(tshockPath) {
+		return tshockInstallationDetection{
+			State:   "incomplete",
+			Version: "unknown",
+			Message: "检测到 TShock 目录残留，但缺少可启动的 TShock.Server 核心文件。可以重新安装或卸载残留目录。",
+		}
+	}
+
+	version := detectInstalledTShockVersion(tshockPath)
+	if !version.Detected || version.Version == "unknown" {
+		return tshockInstallationDetection{
+			State:   "unverified",
+			Version: "unknown",
+			Message: "检测到 TShock 核心文件，但缺少可验证的版本标记，无法判断 TShock 5 / 6。请重新安装或先卸载残留目录。",
+		}
+	}
+
+	requiredRuntime := getRequiredDotNetRuntime(version.Version)
+	runtimeReady := tshockRuntimeInstalled(requiredRuntime)
+	if !runtimeReady {
+		return tshockInstallationDetection{
+			State:           "runtime-missing",
+			Version:         version.Version,
+			RawVersion:      version.RawVersion,
+			RuntimeReady:    false,
+			VersionDetected: true,
+			Message:         "检测到 " + version.Message + "，但缺少 .NET " + requiredRuntime + " Runtime；安装尚未完成。",
+		}
+	}
+
+	if tshockInstallCompleteMarkerMatches(tshockPath, version.Version) {
+		return tshockInstallationDetection{
+			State:           "installed",
+			Version:         version.Version,
+			RawVersion:      version.RawVersion,
+			Installed:       true,
+			Complete:        true,
+			RuntimeReady:    true,
+			VersionDetected: true,
+			Message:         version.Message + "，核心文件、版本标记和所需 Runtime 已验证。",
+		}
+	}
+
+	// Existing installations from earlier panel versions did not have the
+	// completion marker. They remain usable once the core, version and runtime
+	// are all verified, but the UI can distinguish them from a staged install.
+	return tshockInstallationDetection{
+		State:           "legacy-installed",
+		Version:         version.Version,
+		RawVersion:      version.RawVersion,
+		Installed:       true,
+		RuntimeReady:    true,
+		VersionDetected: true,
+		Message:         version.Message + "，核心文件和 Runtime 已验证；这是旧版安装，缺少本面板的完成标记。",
+	}
+}
+
+func tshockInstallCompleteMarkerMatches(tshockPath, expectedMajor string) bool {
+	raw, ok := readTrimmedFile(filepath.Join(tshockPath, tshockInstallCompleteMarker))
+	return ok && normalizeTShockMajor(raw) == expectedMajor
+}
+
+func writeTShockInstallCompleteMarker(tshockPath, version string) error {
+	if normalizeTShockMajor(version) == "unknown" {
+		return os.ErrInvalid
+	}
+	return os.WriteFile(filepath.Join(tshockPath, tshockInstallCompleteMarker), []byte(strings.TrimSpace(version)+"\n"), 0644)
 }
 
 func detectInstalledTShockVersion(tshockPath string) tshockVersionDetection {
@@ -122,7 +221,6 @@ func hasInstalledTShockBinary(tshockPath string) bool {
 		"TShock.Server.exe",
 		"TShock.Server",
 		"TShock.Server.dll",
-		"TShock.dll",
 	}
 
 	for _, candidate := range candidates {

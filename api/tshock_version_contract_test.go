@@ -56,6 +56,87 @@ func TestDetectInstalledTShockVersionIgnoresConfigKeyHeuristicsContract(t *testi
 	}
 }
 
+func TestIncompleteTShockFilesAreNotReportedAsInstalledContract(t *testing.T) {
+	oldServersDir := config.ServersDir
+	oldRuntimeCheck := tshockRuntimeInstalled
+	serversDir := filepath.Join(t.TempDir(), "servers")
+	tshockDir := filepath.Join(serversDir, "tshock")
+	if err := os.MkdirAll(tshockDir, 0755); err != nil {
+		t.Fatalf("create tshock directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("partial"), 0755); err != nil {
+		t.Fatalf("write core file: %v", err)
+	}
+	config.ServersDir = serversDir
+	tshockRuntimeInstalled = func(string) bool { return true }
+	t.Cleanup(func() {
+		config.ServersDir = oldServersDir
+		tshockRuntimeInstalled = oldRuntimeCheck
+	})
+
+	detection := inspectTShockInstallation(tshockDir)
+	if detection.State != "unverified" || detection.Installed || detection.Version != "unknown" {
+		t.Fatalf("unexpected incomplete installation detection: %#v", detection)
+	}
+	if checkTShockInstalled() {
+		t.Fatal("a core-file residue must not be reported as an installed TShock server")
+	}
+	if isGameInstalledForType("tshock5") || isGameInstalledForType("tshock6") {
+		t.Fatal("an unverified TShock residue must not block either TShock install card")
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/tshock-version", DetectTShockVersion)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/tshock-version", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected detection response: %d %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			InstallationState string `json:"installationState"`
+			Installed         bool   `json:"installed"`
+			Message           string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode detection response: %v", err)
+	}
+	if !payload.Success || payload.Data.InstallationState != "unverified" || payload.Data.Installed || !strings.Contains(payload.Data.Message, "无法判断") {
+		t.Fatalf("unexpected detection payload: %#v", payload)
+	}
+}
+
+func TestTShockCompletionMarkerRequiresCoreVersionAndRuntimeContract(t *testing.T) {
+	tshockDir := t.TempDir()
+	oldRuntimeCheck := tshockRuntimeInstalled
+	tshockRuntimeInstalled = func(required string) bool { return required == "9.0" }
+	t.Cleanup(func() { tshockRuntimeInstalled = oldRuntimeCheck })
+
+	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("server"), 0755); err != nil {
+		t.Fatalf("write core file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tshockDir, ".tshock_version"), []byte("6.1.0\n"), 0644); err != nil {
+		t.Fatalf("write version marker: %v", err)
+	}
+	if err := writeTShockInstallCompleteMarker(tshockDir, "6.1.0"); err != nil {
+		t.Fatalf("write completion marker: %v", err)
+	}
+
+	detection := inspectTShockInstallation(tshockDir)
+	if detection.State != "installed" || !detection.Installed || !detection.Complete || !detection.RuntimeReady || detection.Version != "6" {
+		t.Fatalf("unexpected completed installation detection: %#v", detection)
+	}
+
+	tshockRuntimeInstalled = func(string) bool { return false }
+	detection = inspectTShockInstallation(tshockDir)
+	if detection.State != "runtime-missing" || detection.Installed || detection.RuntimeReady {
+		t.Fatalf("missing runtime must not report installed: %#v", detection)
+	}
+}
+
 func TestInitializePluginServerConfigRequiresOfficialFirstRunContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

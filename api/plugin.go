@@ -108,6 +108,10 @@ func UploadPlugin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid filename"))
 		return
 	}
+	if err := validateUploadedPluginForCurrentTShock(file); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
 	pluginsDir := getPluginsDir(roomID)
 	os.MkdirAll(pluginsDir, 0755)
 	destPath := filepath.Join(pluginsDir, filename)
@@ -441,6 +445,9 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 	progress.Progress = 80
 	srcPath, err := findPluginDLL(extractDir, pluginID)
 	if err != nil {
+		return err
+	}
+	if err := validatePluginFileForCurrentTShock(srcPath); err != nil {
 		return err
 	}
 	pluginsDir := getPluginsDir(roomID)
