@@ -476,6 +476,7 @@ func downloadPluginPackage(urls []string, destPath string, progress *models.Down
 		for attempt := 1; attempt <= pluginDownloadAttemptsPerURL; attempt++ {
 			fmt.Printf("[Plugin Install] Downloading from %d/%d (attempt %d/%d): %s\n",
 				index+1, len(urls), attempt, pluginDownloadAttemptsPerURL, downloadURL)
+			progress.Message = fmt.Sprintf("Downloading plugin package (attempt %d/%d)...", attempt, pluginDownloadAttemptsPerURL)
 			if err := downloadPluginFileWithProgress(downloadURL, destPath, progress); err == nil {
 				return nil
 			} else {
@@ -674,7 +675,7 @@ func buildPluginStoreURLs(cfg *config.Config) []string {
 		PluginsJSONURLOriginal,
 		cfg.UseGitHubMirror,
 		cfg.GitHubMirrorURL,
-		cfg.GitHubMirrorAllowedRepos,
+		pluginMirrorAllowedRepos(cfg),
 	)
 }
 
@@ -683,8 +684,18 @@ func buildPluginZipURLs(cfg *config.Config) []string {
 		PluginsZipURLOriginal,
 		cfg.UseGitHubMirror,
 		cfg.GitHubMirrorURL,
-		cfg.GitHubMirrorAllowedRepos,
+		pluginMirrorAllowedRepos(cfg),
 	)
+}
+
+func pluginMirrorAllowedRepos(cfg *config.Config) []string {
+	repos := append([]string{}, cfg.GitHubMirrorAllowedRepos...)
+	for _, repo := range repos {
+		if strings.EqualFold(strings.TrimSpace(repo), "UnrealMultiple/TShockPlugin") {
+			return repos
+		}
+	}
+	return append(repos, "UnrealMultiple/TShockPlugin")
 }
 func fetchPluginStoreFromURL(url string) ([]models.PluginStoreItem, error) {
 	client := &http.Client{
