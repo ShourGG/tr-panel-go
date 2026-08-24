@@ -319,14 +319,7 @@ func CheckGameInstalled(c *gin.Context) {
 	} else if _, err := os.Stat(tmodServerExe); err == nil {
 		tmodInstalled = true
 	}
-	tshockServer := filepath.Join(config.ServersDir, "tshock", "TerrariaServer.exe")
-	tshockServerLinux := filepath.Join(config.ServersDir, "tshock", "TShockServer")
-	tshockInstalled := false
-	if _, err := os.Stat(tshockServer); err == nil {
-		tshockInstalled = true
-	} else if _, err := os.Stat(tshockServerLinux); err == nil {
-		tshockInstalled = true
-	}
+	tshockInstalled := checkTShockInstalled()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{

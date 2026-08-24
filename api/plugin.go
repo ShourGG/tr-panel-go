@@ -37,6 +37,12 @@ var (
 	pluginStoreCacheMutex sync.RWMutex
 )
 
+const pluginDownloadAttemptsPerURL = 3
+
+var pluginDownloadRetryDelay = func(attempt int) time.Duration {
+	return time.Duration(attempt) * time.Second
+}
+
 func GetPlugins(c *gin.Context) {
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.Atoi(roomIDStr)
@@ -467,12 +473,21 @@ func downloadAndInstallPlugin(roomID int, pluginID string, progress *models.Down
 func downloadPluginPackage(urls []string, destPath string, progress *models.DownloadProgress) error {
 	var lastErr error
 	for index, downloadURL := range urls {
-		fmt.Printf("[Plugin Install] Downloading from %d/%d: %s\n", index+1, len(urls), downloadURL)
-		if err := downloadPluginFileWithProgress(downloadURL, destPath, progress); err == nil {
-			return nil
-		} else {
-			lastErr = err
-			_ = os.Remove(destPath)
+		for attempt := 1; attempt <= pluginDownloadAttemptsPerURL; attempt++ {
+			fmt.Printf("[Plugin Install] Downloading from %d/%d (attempt %d/%d): %s\n",
+				index+1, len(urls), attempt, pluginDownloadAttemptsPerURL, downloadURL)
+			if err := downloadPluginFileWithProgress(downloadURL, destPath, progress); err == nil {
+				return nil
+			} else {
+				lastErr = err
+				_ = os.Remove(destPath)
+				if attempt < pluginDownloadAttemptsPerURL {
+					delay := pluginDownloadRetryDelay(attempt)
+					progress.Message = fmt.Sprintf("下载插件包失败，%s后重试...", delay.Round(time.Second))
+					fmt.Printf("[Plugin Install] Download failed: %v; retrying in %s\n", err, delay)
+					time.Sleep(delay)
+				}
+			}
 		}
 	}
 	if lastErr == nil {
@@ -540,9 +555,12 @@ func downloadPluginFileWithProgress(url, destPath string, progress *models.Downl
 		baseProgress: 10,
 		maxProgress:  50,
 	}
-	_, err = io.Copy(out, reader)
+	bytesWritten, err := io.Copy(out, reader)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
+	}
+	if fileSize > 0 && bytesWritten != fileSize {
+		return fmt.Errorf("incomplete plugin package: received %d of %d bytes", bytesWritten, fileSize)
 	}
 	return nil
 }
