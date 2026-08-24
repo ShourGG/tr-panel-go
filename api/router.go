@@ -2,8 +2,10 @@ package api
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"terraria-panel/middleware"
@@ -13,6 +15,9 @@ import (
 
 func SetupRouter(webFS embed.FS) *gin.Engine {
 	r := gin.Default()
+	if err := configureTrustedProxies(r); err != nil {
+		panic(err)
+	}
 	r.Use(CORSMiddleware())
 	r.Use(GzipMiddleware())
 	apiGroup := r.Group("/api")
@@ -221,4 +226,33 @@ func SetupRouter(webFS embed.FS) *gin.Engine {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 	})
 	return r
+}
+
+// Gin trusts all proxies by default. That makes a client-supplied
+// X-Forwarded-For value usable as the rate-limit key. Keep the direct-server
+// deployment safe by disabling proxy headers unless the operator explicitly
+// lists the reverse-proxy addresses in TRUSTED_PROXIES.
+func configureTrustedProxies(r *gin.Engine) error {
+	raw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if raw == "" {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			return fmt.Errorf("disable trusted proxies: %w", err)
+		}
+		return nil
+	}
+
+	proxies := make([]string, 0)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			proxies = append(proxies, value)
+		}
+	}
+	if len(proxies) == 0 {
+		return r.SetTrustedProxies(nil)
+	}
+	if err := r.SetTrustedProxies(proxies); err != nil {
+		return fmt.Errorf("invalid TRUSTED_PROXIES %q: %w", raw, err)
+	}
+	return nil
 }

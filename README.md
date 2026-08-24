@@ -154,6 +154,10 @@ git push origin main
 
 ## 可选：下载直出加速
 
+如果面板部署在反向代理后面，只有代理的实际地址可以配置到 `TRUSTED_PROXIES`，例如
+`TRUSTED_PROXIES=127.0.0.1,::1`。未配置时面板不信任客户端提交的
+`X-Forwarded-For`，限流按 TCP 对端地址计算，避免伪造请求头绕过 IP 限流。
+
 面板默认可以直接由 Go 进程完成备份下载、文件下载。  
 如果你前面还有 Nginx，也可以开启 `X-Accel-Redirect`，让备份 zip 和文件管理里的普通文件由 Nginx 直出，减轻 Go 进程压力。
 

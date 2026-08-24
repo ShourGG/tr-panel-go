@@ -1,0 +1,1 @@
+import{a as e}from"./index-CAQDCIqO.js";function n(){return e.get("/system/info")}function s(){return e.get("/system/cpu")}function a(){return e.get("/system/memory")}function r(){return e.get("/game/check")}export{s as a,a as b,r as c,n as g};

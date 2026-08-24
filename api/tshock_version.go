@@ -116,6 +116,24 @@ func inspectTShockInstallation(tshockPath string) tshockInstallationDetection {
 	}
 }
 
+// A single shared directory can contain only one TShock major version. Keep
+// the installation result scoped to the card/request being rendered so a
+// detected TShock 6 install cannot make the TShock 5 card look installed.
+func tshockInstallationForTarget(detection tshockInstallationDetection, expectedMajor string) tshockInstallationDetection {
+	if expectedMajor == "" || detection.Version == "unknown" || detection.Version == expectedMajor {
+		return detection
+	}
+
+	return tshockInstallationDetection{
+		State:           "conflict",
+		Version:         detection.Version,
+		RawVersion:      detection.RawVersion,
+		RuntimeReady:    detection.RuntimeReady,
+		VersionDetected: detection.VersionDetected,
+		Message:         "当前检测到 TShock " + detection.Version + "，此卡片对应 TShock " + expectedMajor + "；两个版本共享同一目录，只能安装一个，请先卸载当前版本。",
+	}
+}
+
 func tshockInstallCompleteMarkerMatches(tshockPath, expectedMajor string) bool {
 	raw, ok := readTrimmedFile(filepath.Join(tshockPath, tshockInstallCompleteMarker))
 	return ok && normalizeTShockMajor(raw) == expectedMajor

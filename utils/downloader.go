@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -142,9 +143,7 @@ func normalizeMirrorURL(rawURL string) string {
 	return parsed.String()
 }
 func downloadFile(url string, filepath string, onProgress func(int), timeout time.Duration) error {
-	client := &http.Client{
-		Timeout: timeout,
-	}
+	client := newDownloadHTTPClient(timeout)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("create request failed: %v", err)
@@ -174,7 +173,7 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 	lastReportTime := time.Now()
 	startTime := time.Now()
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := readDownloadChunk(resp.Body, buf, timeout)
 		if n > 0 {
 			_, writeErr := out.Write(buf[:n])
 			if writeErr != nil {
@@ -240,6 +239,45 @@ func downloadFile(url string, filepath string, onProgress func(int), timeout tim
 		return fmt.Errorf("downloaded content validation failed: %v", err)
 	}
 	return nil
+}
+
+// Download timeout is an idle timeout for the connection and each body read,
+// rather than a total wall-clock limit for a large archive on a slow link.
+func newDownloadHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if timeout > 0 {
+		transport.DialContext = (&net.Dialer{Timeout: timeout}).DialContext
+		transport.TLSHandshakeTimeout = timeout
+		transport.ResponseHeaderTimeout = timeout
+		transport.ExpectContinueTimeout = timeout
+	}
+	return &http.Client{Transport: transport}
+}
+
+func readDownloadChunk(body io.ReadCloser, buffer []byte, timeout time.Duration) (int, error) {
+	if timeout <= 0 {
+		return body.Read(buffer)
+	}
+
+	type readResult struct {
+		n   int
+		err error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		n, err := body.Read(buffer)
+		result <- readResult{n: n, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case read := <-result:
+		return read.n, read.err
+	case <-timer.C:
+		_ = body.Close()
+		return 0, fmt.Errorf("body read idle timeout after %s", timeout)
+	}
 }
 
 func validateDownloadedFile(filepath string, contentType string) error {

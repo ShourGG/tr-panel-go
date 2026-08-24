@@ -137,6 +137,35 @@ func TestTShockCompletionMarkerRequiresCoreVersionAndRuntimeContract(t *testing.
 	}
 }
 
+func TestTShockInstallationForTargetMarksOtherMajorAsConflict(t *testing.T) {
+	detection := tshockInstallationDetection{
+		State:           "installed",
+		Version:         "6",
+		RawVersion:      "6.1.0",
+		Installed:       true,
+		Complete:        true,
+		RuntimeReady:    true,
+		VersionDetected: true,
+		Message:         "检测到 TShock 6",
+	}
+
+	for _, target := range []string{"5", "6"} {
+		projected := tshockInstallationForTarget(detection, target)
+		if target == "5" {
+			if projected.State != "conflict" || projected.Installed || projected.Complete {
+				t.Fatalf("other major must be a non-installed conflict: %#v", projected)
+			}
+			if !strings.Contains(projected.Message, "只能安装一个") {
+				t.Fatalf("conflict message is not actionable: %q", projected.Message)
+			}
+			continue
+		}
+		if projected.State != "installed" || !projected.Installed || !projected.Complete {
+			t.Fatalf("matching major must retain installed state: %#v", projected)
+		}
+	}
+}
+
 func TestInitializePluginServerConfigRequiresOfficialFirstRunContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

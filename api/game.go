@@ -346,6 +346,8 @@ func GetGameInstallInfo(c *gin.Context) {
 	tshockInstallation := inspectTShockInstallation(filepath.Join(config.ServersDir, "tshock"))
 	tshock5Installed := tshockInstallation.Installed && tshockInstallation.Version == "5"
 	tshock6Installed := tshockInstallation.Installed && tshockInstallation.Version == "6"
+	tshock5Installation := tshockInstallationForTarget(tshockInstallation, "5")
+	tshock6Installation := tshockInstallationForTarget(tshockInstallation, "6")
 	vanillaInstalledVersion, _ := getInstalledGameVersion("vanilla")
 	tmodInstalledVersion, _ := getInstalledGameVersion("tmodloader")
 	tshock5InstalledVersion, _ := getInstalledGameVersion("tshock5")
@@ -411,10 +413,10 @@ func GetGameInstallInfo(c *gin.Context) {
 				"publishedAt":          tshock5Info.PublishedAt,
 				"prerelease":           tshock5Info.Prerelease,
 				"runtimeHealth":        tshock5RuntimeHealth,
-				"installationState":    tshockInstallation.State,
-				"detectionMessage":     tshockInstallation.Message,
-				"detectedVersion":      tshockInstallation.Version,
-				"installationComplete": tshockInstallation.Complete,
+				"installationState":    tshock5Installation.State,
+				"detectionMessage":     tshock5Installation.Message,
+				"detectedVersion":      tshock5Installation.Version,
+				"installationComplete": tshock5Installation.Complete,
 			},
 			"tshock6": gin.H{
 				"name":                 "TShock 6 新版稳定版",
@@ -434,10 +436,10 @@ func GetGameInstallInfo(c *gin.Context) {
 				"publishedAt":          tshock6Info.PublishedAt,
 				"prerelease":           tshock6Info.Prerelease,
 				"runtimeHealth":        tshock6RuntimeHealth,
-				"installationState":    tshockInstallation.State,
-				"detectionMessage":     tshockInstallation.Message,
-				"detectedVersion":      tshockInstallation.Version,
-				"installationComplete": tshockInstallation.Complete,
+				"installationState":    tshock6Installation.State,
+				"detectionMessage":     tshock6Installation.Message,
+				"detectedVersion":      tshock6Installation.Version,
+				"installationComplete": tshock6Installation.Complete,
 			},
 		},
 	})
@@ -677,10 +679,12 @@ func checkVanillaInstalled() bool {
 func checkTModLoaderInstalled() bool {
 	tmodDir := filepath.Join(config.ServersDir, "tModLoader")
 	if info, err := os.Stat(tmodDir); err == nil && info.IsDir() {
-		files, err := os.ReadDir(tmodDir)
-		if err == nil && len(files) > 0 {
-			fmt.Printf("[检测] tModLoader已安装，目录包含 %d 个文件\n", len(files))
-			return true
+		for _, name := range []string{"tModLoader.dll", "tModLoaderServer.exe"} {
+			corePath := filepath.Join(tmodDir, name)
+			if coreInfo, statErr := os.Stat(corePath); statErr == nil && !coreInfo.IsDir() && coreInfo.Size() > 0 {
+				fmt.Printf("[检测] tModLoader已安装，核心文件: %s\n", corePath)
+				return true
+			}
 		}
 	}
 	fmt.Printf("[检测] tModLoader未安装\n")
@@ -2536,11 +2540,27 @@ func UninstallGame(c *gin.Context) {
 		installed = checkVanillaInstalled()
 	case "tmodloader":
 		installed = checkTModLoaderInstalled()
-	case "tshock", "tshock5", "tshock6":
+	case "tshock":
 		tshockDir := filepath.Join(config.ServersDir, "tshock")
 		if info, err := os.Stat(tshockDir); err == nil && info.IsDir() {
 			installed = true
 		}
+	case "tshock5", "tshock6":
+		tshockDir := filepath.Join(config.ServersDir, "tshock")
+		detection := inspectTShockInstallation(tshockDir)
+		expectedMajor := strings.TrimPrefix(req.GameType, "tshock")
+		if !detection.Installed || detection.Version != expectedMajor {
+			message := "无法确认当前 TShock 版本，拒绝按 " + req.GameType + " 删除共享目录；请使用通用 TShock 卸载。"
+			if detection.Version != "unknown" {
+				message = "当前安装的是 TShock " + detection.Version + "，不能按 TShock " + expectedMajor + " 卸载；请先选择当前版本。"
+			}
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"message": message,
+			})
+			return
+		}
+		installed = true
 	}
 	if !installed {
 		c.JSON(http.StatusOK, gin.H{
