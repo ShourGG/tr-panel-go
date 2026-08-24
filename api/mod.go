@@ -59,7 +59,13 @@ var (
 	workshopStaleTTL = 7 * 24 * time.Hour
 )
 
-var steamWorkshopHTTPClient = &http.Client{}
+var (
+	steamWorkshopHTTPClient = &http.Client{}
+	steamWorkshopRequestTTL = 15 * time.Second
+	steamWorkshopRetryDelay = func(attempt int) time.Duration {
+		return time.Duration(attempt) * 500 * time.Millisecond
+	}
+)
 
 func workshopCacheDir() string {
 	return filepath.Join(config.DataDir, "cache", "workshop")
@@ -622,7 +628,7 @@ func fetchSteamWorkshopQueryPage(queryType string, apiPage, apiPageSize int, que
 	const attempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), steamWorkshopRequestTTL)
 		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 		if requestErr != nil {
 			cancel()
@@ -656,7 +662,9 @@ func fetchSteamWorkshopQueryPage(queryType string, apiPage, apiPageSize int, que
 		}
 
 		if attempt < attempts {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			if delay := steamWorkshopRetryDelay(attempt); delay > 0 {
+				time.Sleep(delay)
+			}
 		}
 	}
 
