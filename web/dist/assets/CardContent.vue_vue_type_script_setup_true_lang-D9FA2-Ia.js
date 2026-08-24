@@ -1,1 +1,0 @@
-import{c as s}from"./index-DrA-IvmR.js";import{d as a,k as t,U as o,u as e,Z as r,l as d}from"./vue-vendor-49U8zmVC.js";const n=a({__name:"CardContent",setup:a=>(a,n)=>(d(),t("div",{class:o(e(s)("p-6 pt-0",a.$attrs.class??""))},[r(a.$slots,"default")],2))});export{n as _};

@@ -1,1 +1,0 @@
-import{c as s}from"./index-DrA-IvmR.js";import{d as a,k as r,U as o,u as d,Z as t,l as e}from"./vue-vendor-49U8zmVC.js";const n=a({__name:"Card",setup:a=>(a,n)=>(e(),r("div",{class:o(d(s)("rounded-lg border bg-card text-card-foreground shadow-sm transition-colors duration-150",a.$attrs.class??""))},[t(a.$slots,"default")],2))});export{n as _};
