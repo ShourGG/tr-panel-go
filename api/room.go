@@ -168,7 +168,46 @@ func GetRooms(c *gin.Context) {
 	for i := range rooms {
 		syncRoomRuntimeState(&rooms[i])
 	}
+
+	playerCounts, err := getRoomOnlinePlayerCounts()
+	if err != nil {
+		log.Printf("[WARN] 读取房间在线人数失败: %v", err)
+	} else {
+		for i := range rooms {
+			rooms[i].OnlinePlayers = playerCounts[rooms[i].ID]
+		}
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(rooms))
+}
+
+func getRoomOnlinePlayerCounts() (map[int]int, error) {
+	counts := make(map[int]int)
+	if db.DB == nil {
+		return counts, nil
+	}
+
+	rows, err := db.DB.Query(`
+		SELECT room_id, COUNT(*)
+		FROM players
+		WHERE status = 'online' AND room_id > 0
+		GROUP BY room_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var roomID, count int
+		if err := rows.Scan(&roomID, &count); err != nil {
+			return nil, err
+		}
+		counts[roomID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return counts, nil
 }
 func CreateRoom(c *gin.Context) {
 	var room models.Room

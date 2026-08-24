@@ -1,20 +1,24 @@
 package scheduler
+
 import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"terraria-panel/models"
 	"terraria-panel/storage"
 )
+
 type TaskExecutor struct {
-	roomStorage            storage.RoomStorage
-	taskStorage            storage.TaskStorage
-	backupHandler          BackupHandler
-	restartHandler         RestartHandler
-	cleanupBackupHandler   CleanupBackupHandler
-	cleanupLogHandler      CleanupLogHandler
-	broadcastHandler       BroadcastHandler
-	customCommandHandler   CustomCommandHandler
+	roomStorage          storage.RoomStorage
+	taskStorage          storage.TaskStorage
+	backupHandler        BackupHandler
+	restartHandler       RestartHandler
+	cleanupBackupHandler CleanupBackupHandler
+	cleanupLogHandler    CleanupLogHandler
+	broadcastHandler     BroadcastHandler
+	customCommandHandler CustomCommandHandler
 }
 type BackupHandler interface {
 	CreateBackup(roomID int, backupType string, note string) error
@@ -34,6 +38,7 @@ type BroadcastHandler interface {
 type CustomCommandHandler interface {
 	ExecuteCommand(roomID int, command string) error
 }
+
 func NewTaskExecutor(
 	roomStorage storage.RoomStorage,
 	taskStorage storage.TaskStorage,
@@ -80,14 +85,7 @@ func (e *TaskExecutor) Execute(task *models.ScheduledTask) error {
 }
 func (e *TaskExecutor) executeBackup(params map[string]interface{}) error {
 	log.Println("[Executor] Executing backup task...")
-	roomIDs := []int{}
-	if roomIDsRaw, ok := params["roomIds"].([]interface{}); ok {
-		for _, idRaw := range roomIDsRaw {
-			if id, ok := idRaw.(float64); ok {
-				roomIDs = append(roomIDs, int(id))
-			}
-		}
-	}
+	roomIDs, allRooms := normalizeBackupRoomIDs(params["roomIds"])
 	backupType := "full"
 	if bt, ok := params["backupType"].(string); ok {
 		backupType = bt
@@ -96,7 +94,7 @@ func (e *TaskExecutor) executeBackup(params map[string]interface{}) error {
 	if n, ok := params["note"].(string); ok {
 		note = n
 	}
-	if len(roomIDs) == 0 {
+	if allRooms || len(roomIDs) == 0 {
 		log.Println("[Executor] Backing up all rooms...")
 		rooms, err := e.roomStorage.GetAll()
 		if err != nil {
@@ -116,6 +114,68 @@ func (e *TaskExecutor) executeBackup(params map[string]interface{}) error {
 	}
 	log.Printf("[Executor] Backup task completed, backed up %d rooms", len(roomIDs))
 	return nil
+}
+
+// normalizeBackupRoomIDs accepts the JSON-decoded and programmatic forms used
+// by scheduled tasks. A zero ID is the explicit "all rooms" sentinel.
+func normalizeBackupRoomIDs(raw interface{}) ([]int, bool) {
+	values := make([]interface{}, 0)
+	switch typed := raw.(type) {
+	case nil:
+		return nil, true
+	case []interface{}:
+		values = append(values, typed...)
+	case []int:
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	case []float64:
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	case int, int64, float64, json.Number, string:
+		values = append(values, typed)
+	default:
+		return nil, true
+	}
+
+	seen := make(map[int]struct{})
+	roomIDs := make([]int, 0, len(values))
+	for _, value := range values {
+		roomID, ok := parseBackupRoomID(value)
+		if !ok || roomID < 0 {
+			continue
+		}
+		if roomID == 0 {
+			return nil, true
+		}
+		if _, exists := seen[roomID]; exists {
+			continue
+		}
+		seen[roomID] = struct{}{}
+		roomIDs = append(roomIDs, roomID)
+	}
+	return roomIDs, len(roomIDs) == 0
+}
+
+func parseBackupRoomID(raw interface{}) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), int64(int(value)) == value
+	case float64:
+		roomID := int(value)
+		return roomID, float64(roomID) == value
+	case json.Number:
+		valueInt, err := value.Int64()
+		return int(valueInt), err == nil && int64(int(valueInt)) == valueInt
+	case string:
+		valueInt, err := strconv.Atoi(strings.TrimSpace(value))
+		return valueInt, err == nil
+	default:
+		return 0, false
+	}
 }
 func (e *TaskExecutor) executeRestart(params map[string]interface{}) error {
 	log.Println("[Executor] Executing restart task...")

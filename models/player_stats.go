@@ -1,5 +1,7 @@
 package models
+
 import "time"
+
 type PlayerStats struct {
 	ID             int        `json:"id"`
 	PlayerID       int        `json:"playerId"`
@@ -11,9 +13,11 @@ type PlayerStats struct {
 	FirstSeen      time.Time  `json:"firstSeen"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
 }
+
 func (s *PlayerStats) GetPlayTimeString() string {
 	return formatDuration(s.TotalPlayTime)
 }
+
 type PlayerDailyStats struct {
 	ID            int       `json:"id"`
 	Date          string    `json:"date"`
@@ -24,12 +28,12 @@ type PlayerDailyStats struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 type StatsOverview struct {
-	TotalPlayers   int `json:"totalPlayers"`
-	OnlinePlayers  int `json:"onlinePlayers"`
-	TodayActive    int `json:"todayActive"`
-	WeekActive     int `json:"weekActive"`
-	MonthActive    int `json:"monthActive"`
-	BannedPlayers  int `json:"bannedPlayers"`
+	TotalPlayers  int `json:"totalPlayers"`
+	OnlinePlayers int `json:"onlinePlayers"`
+	TodayActive   int `json:"todayActive"`
+	WeekActive    int `json:"weekActive"`
+	MonthActive   int `json:"monthActive"`
+	BannedPlayers int `json:"bannedPlayers"`
 }
 type PlayerRanking struct {
 	Rank       int    `json:"rank"`
@@ -39,9 +43,11 @@ type PlayerRanking struct {
 	ValueStr   string `json:"valueStr,omitempty"`
 }
 type TrendData struct {
-	Dates          []string `json:"dates"`
-	ActivePlayers  []int    `json:"activePlayers"`
-	TotalPlayTime  []int    `json:"totalPlayTime"`
+	Dates         []string `json:"dates"`
+	ActivePlayers []int    `json:"activePlayers"`
+	TotalPlayTime []int    `json:"totalPlayTime"`
+	Range         string   `json:"range,omitempty"`
+	Granularity   string   `json:"granularity,omitempty"`
 }
 type RoomDistribution struct {
 	RoomID      int    `json:"roomId"`

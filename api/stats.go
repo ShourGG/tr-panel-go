@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +19,19 @@ var (
 	dailyStatsStorage storage.PlayerDailyStatsStorage
 	statsDB           *sql.DB
 )
+
+const activeSessionPlayTimeSQL = `
+	COALESCE((
+		SELECT SUM(
+			CASE
+				WHEN CAST(strftime('%s', 'now') AS INTEGER) > CAST(strftime('%s', active_session.join_time) AS INTEGER)
+				THEN CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', active_session.join_time) AS INTEGER)
+				ELSE 0
+			END
+		)
+		FROM player_sessions active_session
+		WHERE active_session.player_id = p.id AND active_session.leave_time IS NULL
+	), 0)`
 
 func InitStatsStorage(database *sql.DB) {
 	statsDB = database
@@ -150,22 +164,13 @@ func GetRankings(c *gin.Context) {
 		return
 	}
 	if rankType == "playtime" {
-		statsList, err := statsStorage.GetTopByPlayTime(limit)
+		rankings, err = getLivePlaytimeRankings(limit)
 		if err != nil {
 			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 				"rankings": rankings,
 				"type":     rankType,
 			}))
 			return
-		}
-		for i, stats := range statsList {
-			rankings = append(rankings, &models.PlayerRanking{
-				Rank:       i + 1,
-				PlayerID:   stats.PlayerID,
-				PlayerName: stats.PlayerName,
-				Value:      stats.TotalPlayTime,
-				ValueStr:   stats.GetPlayTimeString(),
-			})
 		}
 	} else if rankType == "logincount" {
 		statsList, err := statsStorage.GetTopByLoginCount(limit)
@@ -213,6 +218,47 @@ func GetRankings(c *gin.Context) {
 		"type":     rankType,
 	}))
 }
+
+func getLivePlaytimeRankings(limit int) ([]*models.PlayerRanking, error) {
+	if statsDB == nil {
+		return []*models.PlayerRanking{}, nil
+	}
+
+	rows, err := statsDB.Query(`
+		SELECT
+			p.id,
+			p.name,
+			COALESCE(player_stats.total_play_time, 0) + `+activeSessionPlayTimeSQL+` AS total_play_time
+		FROM players p
+		LEFT JOIN player_stats ON player_stats.player_id = p.id
+		ORDER BY total_play_time DESC, p.name COLLATE NOCASE ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rankings := make([]*models.PlayerRanking, 0, limit)
+	for rows.Next() {
+		var playerID, playTime int
+		var playerName string
+		if err := rows.Scan(&playerID, &playerName, &playTime); err != nil {
+			return nil, err
+		}
+		rankings = append(rankings, &models.PlayerRanking{
+			Rank:       len(rankings) + 1,
+			PlayerID:   playerID,
+			PlayerName: playerName,
+			Value:      playTime,
+			ValueStr:   formatDuration(playTime),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return rankings, nil
+}
 func GetPlayerList(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("pageSize", "20")
@@ -238,13 +284,13 @@ func GetPlayerList(c *gin.Context) {
 
 	query := `
 		SELECT 
-			p.id, p.name, COALESCE(p.ip, ''), p.room_id, p.status, p.is_banned, p.created_at,
+			p.id, p.name, COALESCE(p.ip, ''), p.room_id, p.status, p.is_banned, CAST(p.created_at AS TEXT),
 			r.name as room_name,
-			COALESCE(ps.total_play_time, 0) as total_play_time,
+			COALESCE(ps.total_play_time, 0) + ` + activeSessionPlayTimeSQL + ` as total_play_time,
 			COALESCE(ps.login_count, 0) as login_count,
 			ps.last_login_time,
 			ps.last_logout_time,
-			COALESCE(ps.first_seen, p.created_at) as first_seen
+			CAST(COALESCE(ps.first_seen, p.created_at) AS TEXT) as first_seen
 		FROM players p
 		LEFT JOIN rooms r ON p.room_id = r.id
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
@@ -293,6 +339,8 @@ func GetPlayerList(c *gin.Context) {
 	for rows.Next() {
 		player := &models.PlayerDetail{}
 		var roomName sql.NullString
+		var createdAtRaw sql.NullString
+		var firstSeenRaw sql.NullString
 		err := rows.Scan(
 			&player.ID,
 			&player.Name,
@@ -300,19 +348,28 @@ func GetPlayerList(c *gin.Context) {
 			&player.RoomID,
 			&player.Status,
 			&player.IsBanned,
-			&player.FirstSeen,
+			&createdAtRaw,
 			&roomName,
 			&player.TotalPlayTime,
 			&player.LoginCount,
 			&player.LastLoginTime,
 			&player.LastLogoutTime,
-			&player.FirstSeen,
+			&firstSeenRaw,
 		)
 		if err != nil {
-			continue
+			log.Printf("[ERROR] 读取玩家统计记录失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取玩家统计记录失败: "+err.Error()))
+			return
 		}
 		if roomName.Valid {
 			player.RoomName = roomName.String
+		}
+		firstSeenValue := firstSeenRaw.String
+		if firstSeenValue == "" {
+			firstSeenValue = createdAtRaw.String
+		}
+		if parsed, ok := parsePlayerTime(firstSeenValue); ok {
+			player.FirstSeen = *parsed
 		}
 		player.PlayTimeStr = formatDuration(player.TotalPlayTime)
 		players = append(players, player)
@@ -325,27 +382,23 @@ func GetPlayerList(c *gin.Context) {
 	}))
 }
 func GetTrends(c *gin.Context) {
-	daysStr := c.DefaultQuery("days", "7")
-	days, err := strconv.Atoi(daysStr)
-	if err != nil || days <= 0 || days > 90 {
-		days = 7
-	}
+	rangeValue, granularity, bucketStarts := buildTrendBuckets(time.Now(), c.Query("range"), c.Query("granularity"), c.Query("days"))
 	trend := &models.TrendData{
 		Dates:         []string{},
 		ActivePlayers: []int{},
 		TotalPlayTime: []int{},
+		Range:         rangeValue,
+		Granularity:   granularity,
 	}
 	now := time.Now()
-	for i := days - 1; i >= 0; i-- {
-		dayStart := startOfDay(now.AddDate(0, 0, -i))
-		dayEnd := dayStart.AddDate(0, 0, 1)
-		if dayEnd.After(now) {
-			dayEnd = now
+	for _, bucketStart := range bucketStarts {
+		bucketEnd := nextTrendBucket(bucketStart, granularity)
+		if bucketEnd.After(now) {
+			bucketEnd = now
 		}
-		date := dayStart.Format("2006-01-02")
-		trend.Dates = append(trend.Dates, date)
+		trend.Dates = append(trend.Dates, formatTrendBucket(bucketStart, granularity))
 
-		activePlayers, totalPlayTime, statErr := getActivityStatsInRange(dayStart, dayEnd)
+		activePlayers, totalPlayTime, statErr := getActivityStatsInRange(bucketStart, bucketEnd)
 		if statErr != nil {
 			trend.ActivePlayers = append(trend.ActivePlayers, 0)
 			trend.TotalPlayTime = append(trend.TotalPlayTime, 0)
@@ -356,6 +409,118 @@ func GetTrends(c *gin.Context) {
 		trend.TotalPlayTime = append(trend.TotalPlayTime, totalPlayTime)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(trend))
+}
+
+func buildTrendBuckets(now time.Time, rangeRaw, granularityRaw, legacyDaysRaw string) (string, string, []time.Time) {
+	rangeRaw = strings.ToLower(strings.TrimSpace(rangeRaw))
+	granularity := strings.ToLower(strings.TrimSpace(granularityRaw))
+
+	if rangeRaw == "" {
+		days, err := strconv.Atoi(strings.TrimSpace(legacyDaysRaw))
+		if err != nil || days <= 0 || days > 90 {
+			days = 7
+		}
+		rangeRaw = strconv.Itoa(days) + "d"
+		if granularity == "" {
+			granularity = "day"
+		}
+	}
+
+	count := 0
+	unit := ""
+	if len(rangeRaw) >= 2 {
+		unit = rangeRaw[len(rangeRaw)-1:]
+		count, _ = strconv.Atoi(rangeRaw[:len(rangeRaw)-1])
+	}
+	validRange := count > 0 && ((unit == "h" && count <= 168) || (unit == "d" && count <= 366) || (unit == "w" && count <= 104) || (unit == "m" && count <= 60))
+	if !validRange {
+		rangeRaw = "7d"
+		unit = "d"
+		count = 7
+	}
+
+	if granularity == "" {
+		switch unit {
+		case "h":
+			granularity = "hour"
+		case "w":
+			granularity = "week"
+		case "m":
+			granularity = "month"
+		default:
+			granularity = "day"
+		}
+	}
+	if granularity != "hour" && granularity != "day" && granularity != "week" && granularity != "month" {
+		granularity = "day"
+	}
+
+	bucketCount := count
+	switch unit {
+	case "h":
+		if granularity != "hour" {
+			bucketCount = 1
+		}
+	case "d":
+		switch granularity {
+		case "hour":
+			bucketCount = count * 24
+		case "week", "month":
+			bucketCount = 1
+		}
+	case "w", "m":
+		if (unit == "w" && granularity != "week") || (unit == "m" && granularity != "month") {
+			bucketCount = 1
+		}
+	}
+
+	currentStart := trendBucketStart(now, granularity)
+	starts := make([]time.Time, 0, bucketCount)
+	for i := bucketCount - 1; i >= 0; i-- {
+		starts = append(starts, addTrendBuckets(currentStart, granularity, -i))
+	}
+	return rangeRaw, granularity, starts
+}
+
+func trendBucketStart(value time.Time, granularity string) time.Time {
+	switch granularity {
+	case "hour":
+		return value.Truncate(time.Hour)
+	case "week":
+		return startOfWeek(value)
+	case "month":
+		return startOfMonth(value)
+	default:
+		return startOfDay(value)
+	}
+}
+
+func addTrendBuckets(value time.Time, granularity string, count int) time.Time {
+	switch granularity {
+	case "hour":
+		return value.Add(time.Duration(count) * time.Hour)
+	case "week":
+		return value.AddDate(0, 0, count*7)
+	case "month":
+		return value.AddDate(0, count, 0)
+	default:
+		return value.AddDate(0, 0, count)
+	}
+}
+
+func nextTrendBucket(value time.Time, granularity string) time.Time {
+	return addTrendBuckets(value, granularity, 1)
+}
+
+func formatTrendBucket(value time.Time, granularity string) string {
+	switch granularity {
+	case "hour":
+		return value.Format("2006-01-02 15:00")
+	case "month":
+		return value.Format("2006-01")
+	default:
+		return value.Format("2006-01-02")
+	}
 }
 func GetDistribution(c *gin.Context) {
 	query := `

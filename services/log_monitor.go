@@ -231,6 +231,7 @@ func (m *LogMonitor) handlePlayerJoin(playerName, ipAddress string, roomID int) 
 		return
 	}
 	if activeSession != nil {
+		m.updatePlayerConnection(playerID, roomID, ipAddress, "online")
 		return
 	}
 	session := &models.PlayerSession{
@@ -244,7 +245,7 @@ func (m *LogMonitor) handlePlayerJoin(playerName, ipAddress string, roomID int) 
 		return
 	}
 	m.updatePlayerStatsOnJoin(playerID)
-	m.updatePlayerStatus(playerID, roomID, "online")
+	m.updatePlayerConnection(playerID, roomID, ipAddress, "online")
 	log.Printf("Player %s joined room %d", playerName, roomID)
 }
 func (m *LogMonitor) handlePlayerLeave(playerName string, roomID int) {
@@ -338,5 +339,20 @@ func (m *LogMonitor) updatePlayerStatsOnLeave(playerID int, duration int) {
 }
 func (m *LogMonitor) updatePlayerStatus(playerID, roomID int, status string) {
 	query := `UPDATE players SET status = ?, room_id = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?`
-	m.db.Exec(query, status, roomID, playerID)
+	if _, err := m.db.Exec(query, status, roomID, playerID); err != nil {
+		log.Printf("Failed to update player status: %v", err)
+	}
+}
+
+func (m *LogMonitor) updatePlayerConnection(playerID, roomID int, ipAddress, status string) {
+	ipAddress = strings.TrimSpace(ipAddress)
+	if ipAddress == "" {
+		m.updatePlayerStatus(playerID, roomID, status)
+		return
+	}
+
+	query := `UPDATE players SET ip = ?, status = ?, room_id = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?`
+	if _, err := m.db.Exec(query, ipAddress, status, roomID, playerID); err != nil {
+		log.Printf("Failed to update player connection: %v", err)
+	}
 }

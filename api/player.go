@@ -225,7 +225,7 @@ func queryPlayers(statusFilter string, roomID int) ([]PlayerListItem, error) {
 			COALESCE(r.name, ''),
 			COALESCE(r.server_type, ''),
 			COALESCE(ps.login_count, 0),
-			COALESCE(ps.total_play_time, 0),
+			COALESCE(ps.total_play_time, 0) + ` + activeSessionPlayTimeSQL + `,
 			COALESCE(p.status, 'offline'),
 			COALESCE(p.is_banned, 0),
 			COALESCE(p.last_seen, p.created_at),
