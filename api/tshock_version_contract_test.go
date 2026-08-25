@@ -37,7 +37,7 @@ func TestDetectInstalledTShockVersionUsesOfficialMarkersContract(t *testing.T) {
 
 func TestDetectInstalledTShockVersionIgnoresConfigKeyHeuristicsContract(t *testing.T) {
 	tshockDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server.dll"), []byte(""), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server.dll"), []byte("placeholder"), 0644); err != nil {
 		t.Fatalf("write binary marker: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(tshockDir, "config.json"), []byte(`{"Settings":{"服务器端口":7777,"ServerPort":7777}}`), 0644); err != nil {
@@ -75,8 +75,11 @@ func TestIncompleteTShockFilesAreNotReportedAsInstalledContract(t *testing.T) {
 	})
 
 	detection := inspectTShockInstallation(tshockDir)
-	if detection.State != "unverified" || detection.Installed || detection.Version != "unknown" {
+	if detection.State != "incomplete" || detection.Installed || detection.Complete || detection.Version != "unknown" {
 		t.Fatalf("unexpected incomplete installation detection: %#v", detection)
+	}
+	if !strings.Contains(detection.Message, "ServerPlugins/TShockAPI.dll") || !strings.Contains(detection.Message, "ServerPlugins/TShockAPI.deps.json") {
+		t.Fatalf("incomplete installation message must list missing core files: %q", detection.Message)
 	}
 	if checkTShockInstalled() {
 		t.Fatal("a core-file residue must not be reported as an installed TShock server")
@@ -104,8 +107,43 @@ func TestIncompleteTShockFilesAreNotReportedAsInstalledContract(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode detection response: %v", err)
 	}
-	if !payload.Success || payload.Data.InstallationState != "unverified" || payload.Data.Installed || !strings.Contains(payload.Data.Message, "无法判断") {
+	if !payload.Success || payload.Data.InstallationState != "incomplete" || payload.Data.Installed || !strings.Contains(payload.Data.Message, "ServerPlugins/TShockAPI.dll") {
 		t.Fatalf("unexpected detection payload: %#v", payload)
+	}
+}
+
+func TestTShockCoreValidationReportsEachMissingOfficialPluginFile(t *testing.T) {
+	tshockDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tshockDir, "ServerPlugins"), []byte("not a directory"), 0644); err != nil {
+		t.Fatalf("write invalid plugin path: %v", err)
+	}
+	missing := missingTShockCoreFiles(tshockDir)
+	if len(missing) != len(tshockRequiredCoreFiles) {
+		t.Fatalf("invalid plugin directory should report both files, got %v", missing)
+	}
+
+	if err := os.Remove(filepath.Join(tshockDir, "ServerPlugins")); err != nil {
+		t.Fatalf("remove invalid plugin path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tshockDir, "ServerPlugins"), 0755); err != nil {
+		t.Fatalf("create plugin directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tshockDir, "ServerPlugins", "TShockAPI.dll"), []byte("api"), 0644); err != nil {
+		t.Fatalf("write API plugin: %v", err)
+	}
+	missing = missingTShockCoreFiles(tshockDir)
+	if len(missing) != 1 || missing[0] != "ServerPlugins/TShockAPI.deps.json" {
+		t.Fatalf("missing deps file was not reported precisely: %v", missing)
+	}
+	if err := validateTShockCoreFiles(tshockDir); err == nil || !strings.Contains(err.Error(), "ServerPlugins/TShockAPI.deps.json") {
+		t.Fatalf("expected clear missing deps validation error, got %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tshockDir, "ServerPlugins", "TShockAPI.deps.json"), []byte(`{"runtimeTarget":{}}`), 0644); err != nil {
+		t.Fatalf("write deps file: %v", err)
+	}
+	if err := validateTShockCoreFiles(tshockDir); err != nil {
+		t.Fatalf("complete TShock core files should validate: %v", err)
 	}
 }
 
@@ -115,9 +153,7 @@ func TestTShockCompletionMarkerRequiresCoreVersionAndRuntimeContract(t *testing.
 	tshockRuntimeInstalled = func(required string) bool { return required == "9.0" }
 	t.Cleanup(func() { tshockRuntimeInstalled = oldRuntimeCheck })
 
-	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("server"), 0755); err != nil {
-		t.Fatalf("write core file: %v", err)
-	}
+	writeTShockCoreFiles(t, tshockDir)
 	if err := os.WriteFile(filepath.Join(tshockDir, ".tshock_version"), []byte("6.1.0\n"), 0644); err != nil {
 		t.Fatalf("write version marker: %v", err)
 	}

@@ -880,7 +880,7 @@ seed=%s
 		os.MkdirAll(filepath.Join(roomTshockDir, "backups"), 0755)
 		roomExePath := filepath.Join(roomTshockDir, filepath.Base(exePath))
 		needsInitialization := false
-		if _, err := os.Stat(roomExePath); os.IsNotExist(err) {
+		if !isUsableTShockFile(roomExePath) {
 			needsInitialization = true
 			log.Printf("[INFO] 房间 TShock 目录未初始化，开始复制所有文件...")
 		}
@@ -921,6 +921,17 @@ seed=%s
 			log.Printf("[INFO] 房间现在拥有独立的 TShock 实例（完全隔离）")
 		} else {
 			log.Printf("[INFO] 房间 TShock 目录已存在，跳过初始化")
+		}
+		if err := copyMissingTShockCoreFiles(tshockDir, roomTshockDir); err != nil {
+			log.Printf("[ERROR] 补齐房间 TShock 核心文件失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("房间 TShock 核心文件不完整: "+err.Error()))
+			return
+		}
+		if missing := missingTShockCoreFiles(roomTshockDir); len(missing) > 0 {
+			message := "房间 TShock 核心文件仍然缺失: " + strings.Join(missing, ", ")
+			log.Printf("[ERROR] %s", message)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(message))
+			return
 		}
 		exePath = roomExePath
 		log.Printf("[INFO] 使用房间专属 TShock 可执行文件: %s", exePath)

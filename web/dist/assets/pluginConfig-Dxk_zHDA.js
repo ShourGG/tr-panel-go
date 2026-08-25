@@ -1,0 +1,1 @@
+import{h as t}from"./index-Cqns41Ys.js";function n(){return t({url:"/plugin-configs",method:"get"})}function o(n){return t({url:"/plugin-configs/content",method:"get",params:{path:n}})}function a(n,o,a=!1){return t({url:"/plugin-configs/content",method:"put",params:{path:n},data:{content:o,hotReload:a}})}export{n as a,o as g,a as s};

@@ -38,7 +38,7 @@ func fileExists(path string) bool {
 type TShockUser struct {
 	ID           int    `json:"id"`
 	Username     string `json:"username"`
-	Password     string `json:"password"`
+	Password     string `json:"-"`
 	UUID         string `json:"uuid"`
 	Usergroup    string `json:"usergroup"`
 	Registered   string `json:"registered"`
@@ -96,7 +96,7 @@ func GetTShockUsers(c *gin.Context) {
 	search := c.Query("search")
 	group := c.Query("group")
 	offset := (page - 1) * pageSize
-	query := "SELECT ID, Username, Password, UUID, Usergroup, Registered, LastAccessed, KnownIPs FROM Users WHERE 1=1"
+	query := "SELECT ID, COALESCE(Username, ''), COALESCE(Password, ''), COALESCE(UUID, ''), COALESCE(Usergroup, ''), COALESCE(Registered, ''), COALESCE(LastAccessed, ''), COALESCE(KnownIPs, '') FROM Users WHERE 1=1"
 	countQuery := "SELECT COUNT(*) FROM Users WHERE 1=1"
 	args := []interface{}{}
 	if search != "" {
@@ -125,15 +125,10 @@ func GetTShockUsers(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-	users := []TShockUser{}
-	for rows.Next() {
-		var user TShockUser
-		err := rows.Scan(&user.ID, &user.Username, &user.Password, &user.UUID,
-			&user.Usergroup, &user.Registered, &user.LastAccessed, &user.KnownIPs)
-		if err != nil {
-			continue
-		}
-		users = append(users, user)
+	users, err := scanTShockUsers(rows)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "读取用户失败: " + err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -144,6 +139,22 @@ func GetTShockUsers(c *gin.Context) {
 			"pageSize": pageSize,
 		},
 	})
+}
+
+func scanTShockUsers(rows *sql.Rows) ([]TShockUser, error) {
+	users := []TShockUser{}
+	for rows.Next() {
+		var user TShockUser
+		if err := rows.Scan(&user.ID, &user.Username, &user.Password, &user.UUID,
+			&user.Usergroup, &user.Registered, &user.LastAccessed, &user.KnownIPs); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 func GetTShockBans(c *gin.Context) {
 	db, _, ok := openReadyTShockSQLite(c)

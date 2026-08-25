@@ -99,12 +99,12 @@ var tModLoaderReleaseCache = struct {
 }{}
 
 var supportedVanillaVersionCodes = []string{
-	"1457", "1456", "1455", "1454", "1453", "1452", "1451", "1450",
+	"1458", "1457", "1456", "1455", "1454", "1453", "1452", "1451", "1450",
 	"1449", "1448", "1447", "1446", "1445", "1444",
 }
 
-const latestVanillaVersionCode = "1457"
-const latestVanillaPublishedAt = "2026-08-19T20:34:33Z"
+const latestVanillaVersionCode = "1458"
+const latestVanillaPublishedAt = "2026-08-23T18:39:51Z"
 
 var activeGameTasks = struct {
 	sync.RWMutex
@@ -1196,6 +1196,9 @@ func installTShockServerAtomically(gameType, downloadURL, resolvedVersion, targe
 func validateStagedTShockInstallation(stageDir, expectedMajor string) error {
 	if !hasInstalledTShockBinary(stageDir) {
 		return fmt.Errorf("TShock 安装包不完整：未找到 TShock.Server 核心文件")
+	}
+	if err := validateTShockCoreFiles(stageDir); err != nil {
+		return err
 	}
 
 	detection := detectInstalledTShockVersion(stageDir)

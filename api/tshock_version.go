@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,11 @@ type tshockVersionDetection struct {
 }
 
 const tshockInstallCompleteMarker = ".tshock_install_complete"
+
+var tshockRequiredCoreFiles = []string{
+	"ServerPlugins/TShockAPI.dll",
+	"ServerPlugins/TShockAPI.deps.json",
+}
 
 var tshockRuntimeInstalled = isRequiredDotNetRuntimeInstalled
 
@@ -68,6 +74,20 @@ func inspectTShockInstallation(tshockPath string) tshockInstallationDetection {
 	}
 
 	version := detectInstalledTShockVersion(tshockPath)
+	if missing := missingTShockCoreFiles(tshockPath); len(missing) > 0 {
+		versionLabel := version.Version
+		if !version.Detected {
+			versionLabel = "unknown"
+		}
+		return tshockInstallationDetection{
+			State:           "incomplete",
+			Version:         versionLabel,
+			RawVersion:      version.RawVersion,
+			VersionDetected: version.Detected,
+			Message:         fmt.Sprintf("检测到 TShock 目录残留，但缺少或无效的核心文件：%s。请重新安装或卸载残留目录。", strings.Join(missing, ", ")),
+		}
+	}
+
 	if !version.Detected || version.Version == "unknown" {
 		return tshockInstallationDetection{
 			State:   "unverified",
@@ -242,10 +262,73 @@ func hasInstalledTShockBinary(tshockPath string) bool {
 	}
 
 	for _, candidate := range candidates {
-		if _, err := os.Stat(filepath.Join(tshockPath, candidate)); err == nil {
+		if isUsableTShockFile(filepath.Join(tshockPath, candidate)) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func missingTShockCoreFiles(tshockPath string) []string {
+	missing := make([]string, 0, len(tshockRequiredCoreFiles))
+	for _, relativePath := range tshockRequiredCoreFiles {
+		if !isUsableTShockFile(filepath.Join(tshockPath, relativePath)) {
+			missing = append(missing, relativePath)
+		}
+	}
+	return missing
+}
+
+func validateTShockCoreFiles(tshockPath string) error {
+	missing := missingTShockCoreFiles(tshockPath)
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("TShock 安装包不完整：缺少或无效的核心插件文件：%s", strings.Join(missing, ", "))
+}
+
+func isUsableTShockFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Size() > 0
+}
+
+func installedTShockBinaryPath(tshockPath string) string {
+	for _, candidate := range []string{
+		"TShock.Server.exe",
+		"TShock.Server",
+		"TShock.Server.dll",
+	} {
+		if isUsableTShockFile(filepath.Join(tshockPath, candidate)) {
+			return filepath.Join(tshockPath, candidate)
+		}
+	}
+	return ""
+}
+
+func copyMissingTShockCoreFiles(sourceDir, targetDir string) error {
+	sourceBinary := installedTShockBinaryPath(sourceDir)
+	if sourceBinary == "" {
+		return fmt.Errorf("共享 TShock 目录缺少或无效的 TShock.Server 核心文件")
+	}
+
+	relativePaths := []string{filepath.Base(sourceBinary)}
+	relativePaths = append(relativePaths, tshockRequiredCoreFiles...)
+	for _, relativePath := range relativePaths {
+		sourcePath := filepath.Join(sourceDir, relativePath)
+		if !isUsableTShockFile(sourcePath) {
+			return fmt.Errorf("共享 TShock 目录缺少或无效的核心文件：%s", relativePath)
+		}
+		targetPath := filepath.Join(targetDir, relativePath)
+		if isUsableTShockFile(targetPath) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("创建 TShock 核心文件目录失败：%s：%w", relativePath, err)
+		}
+		if err := copyFile(sourcePath, targetPath); err != nil {
+			return fmt.Errorf("补齐 TShock 核心文件失败：%s：%w", relativePath, err)
+		}
+	}
+	return nil
 }

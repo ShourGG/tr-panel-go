@@ -1,5 +1,7 @@
 package models
+
 import "time"
+
 type Plugin struct {
 	Name        string    `json:"name"`
 	FilePath    string    `json:"filePath"`
@@ -26,9 +28,11 @@ type DownloadProgress struct {
 	ID         string    `json:"id"`
 	PluginName string    `json:"pluginName"`
 	Status     string    `json:"status"`
+	Stage      string    `json:"stage"`
 	Progress   int       `json:"progress"`
 	Message    string    `json:"message"`
 	StartTime  time.Time `json:"startTime"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 type PluginUploadRequest struct {
 	RoomID int `json:"roomId" binding:"required"`

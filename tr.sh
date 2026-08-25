@@ -67,6 +67,14 @@ DOWNLOAD_RETRIES=3
 DOWNLOAD_SPEED_LIMIT=1
 DOWNLOAD_SPEED_TIME=20
 
+validate_version_tag() {
+    [[ "${1:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]
+}
+
+validate_mirror_index() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$1" -ge 0 ] && [ "$1" -lt "${#MIRRORS[@]}" ]
+}
+
 get_mirror_api()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f2; }
 get_mirror_download() { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f3; }
 get_mirror_raw()      { echo "${MIRRORS[$MIRROR_IDX]}" | cut -d'|' -f4; }
@@ -202,6 +210,10 @@ get_latest_version() {
     load_update_channel
 
     if [ -n "$VERSION_OVERRIDE" ]; then
+        if ! validate_version_tag "$VERSION_OVERRIDE"; then
+            echo -e "${RED}错误: --version 不是合法的 release tag${NC}" >&2
+            return 1
+        fi
         echo "$VERSION_OVERRIDE"
         return 0
     fi
@@ -235,6 +247,10 @@ print(items[0].get('tag_name', '') if items else '')
         echo ""
         return 1
     else
+        if ! validate_version_tag "$LATEST"; then
+            echo -e "${RED}错误: GitHub 返回了非法 release tag${NC}" >&2
+            return 1
+        fi
         echo "$LATEST"
         return 0
     fi
@@ -254,6 +270,17 @@ print_missing_channel_release_error() {
 get_release_download_url() {
     local version="$1"
     local filename="$2"
+    if ! validate_version_tag "$version"; then
+        echo -e "${RED}错误: 拒绝使用非法 release tag${NC}" >&2
+        return 1
+    fi
+    case "$filename" in
+        terraria-panel|SHA256SUMS) ;;
+        *)
+            echo -e "${RED}错误: 拒绝下载未声明的 release 资产${NC}" >&2
+            return 1
+            ;;
+    esac
     local dl_base=$(get_mirror_download)
     echo "${dl_base}/ShourGG/tr-panel-go/releases/download/${version}/${filename}"
 }
@@ -765,6 +792,10 @@ if [ "${1:-}" = "--install" ] || [ "${TR_PANEL_AUTO_INSTALL:-}" = "1" ]; then
                 ;;
             --mirror=*)
                 MIRROR_IDX="${1#*=}"
+                if ! validate_mirror_index "$MIRROR_IDX"; then
+                    echo -e "${RED}错误: 无效的镜像索引${NC}"
+                    exit 2
+                fi
                 shift
                 ;;
             *)

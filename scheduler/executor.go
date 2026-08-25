@@ -179,63 +179,83 @@ func parseBackupRoomID(raw interface{}) (int, bool) {
 }
 func (e *TaskExecutor) executeRestart(params map[string]interface{}) error {
 	log.Println("[Executor] Executing restart task...")
-	roomID := 0
-	if id, ok := params["roomId"].(float64); ok {
-		roomID = int(id)
+	roomIDs, err := e.resolveTaskRoomIDs(params, false)
+	if err != nil {
+		return fmt.Errorf("%w for restart task", err)
 	}
-	if roomID == 0 {
-		return fmt.Errorf("room ID is required for restart task")
+	for _, roomID := range roomIDs {
+		log.Printf("[Executor] Restarting room %d...", roomID)
+		if err := e.restartHandler.RestartRoom(roomID); err != nil {
+			return fmt.Errorf("failed to restart room %d: %w", roomID, err)
+		}
+		log.Printf("[Executor] Room %d restarted successfully", roomID)
 	}
-	log.Printf("[Executor] Restarting room %d...", roomID)
-	if err := e.restartHandler.RestartRoom(roomID); err != nil {
-		return fmt.Errorf("failed to restart room %d: %w", roomID, err)
-	}
-	log.Printf("[Executor] Room %d restarted successfully", roomID)
 	return nil
 }
 func (e *TaskExecutor) executeCleanupBackup(params map[string]interface{}) error {
 	log.Println("[Executor] Executing cleanup backup task...")
-	roomID := 0
-	if id, ok := params["roomId"].(float64); ok {
-		roomID = int(id)
-	}
 	daysToKeep := 7
 	if days, ok := params["daysToKeep"].(float64); ok {
 		daysToKeep = int(days)
 	}
-	log.Printf("[Executor] Cleaning up backups older than %d days for room %d...", daysToKeep, roomID)
-	if err := e.cleanupBackupHandler.CleanupOldBackups(roomID, daysToKeep); err != nil {
-		return fmt.Errorf("failed to cleanup old backups: %w", err)
+	selection := normalizeTaskRoomSelection(params)
+	if selection.all || selection.legacyZero {
+		log.Printf("[Executor] Cleaning up backups older than %d days for all rooms...", daysToKeep)
+		if err := e.cleanupBackupHandler.CleanupOldBackups(0, daysToKeep); err != nil {
+			return fmt.Errorf("failed to cleanup old backups: %w", err)
+		}
+		return nil
+	}
+	if len(selection.roomIDs) == 0 {
+		return fmt.Errorf("room ID is required for cleanup backup task")
+	}
+	for _, roomID := range selection.roomIDs {
+		log.Printf("[Executor] Cleaning up backups older than %d days for room %d...", daysToKeep, roomID)
+		if err := e.cleanupBackupHandler.CleanupOldBackups(roomID, daysToKeep); err != nil {
+			return fmt.Errorf("failed to cleanup old backups for room %d: %w", roomID, err)
+		}
 	}
 	log.Println("[Executor] Cleanup backup task completed successfully")
 	return nil
 }
 func (e *TaskExecutor) executeCleanupLog(params map[string]interface{}) error {
 	log.Println("[Executor] Executing cleanup log task...")
-	roomID := 0
-	if id, ok := params["roomId"].(float64); ok {
-		roomID = int(id)
-	}
 	daysToKeep := 7
 	if days, ok := params["daysToKeep"].(float64); ok {
 		daysToKeep = int(days)
 	}
-	log.Printf("[Executor] Cleaning up logs older than %d days for room %d...", daysToKeep, roomID)
-	if err := e.cleanupLogHandler.CleanupOldLogs(roomID, daysToKeep); err != nil {
-		return fmt.Errorf("failed to cleanup old logs: %w", err)
+	selection := normalizeTaskRoomSelection(params)
+	if selection.all {
+		// Keep the panel log covered by the existing roomID=0 handler, then
+		// clean each room log independently because roomID=0 historically means
+		// the panel log for this handler.
+		if err := e.cleanupLogHandler.CleanupOldLogs(0, daysToKeep); err != nil {
+			return fmt.Errorf("failed to cleanup panel logs: %w", err)
+		}
+		roomIDs, err := e.getAllRoomIDs()
+		if err != nil {
+			return fmt.Errorf("failed to get rooms: %w", err)
+		}
+		selection.roomIDs = roomIDs
+	} else if selection.legacyZero {
+		if err := e.cleanupLogHandler.CleanupOldLogs(0, daysToKeep); err != nil {
+			return fmt.Errorf("failed to cleanup old logs: %w", err)
+		}
+		return nil
+	} else if len(selection.roomIDs) == 0 {
+		return fmt.Errorf("room ID is required for cleanup log task")
+	}
+	for _, roomID := range selection.roomIDs {
+		log.Printf("[Executor] Cleaning up logs older than %d days for room %d...", daysToKeep, roomID)
+		if err := e.cleanupLogHandler.CleanupOldLogs(roomID, daysToKeep); err != nil {
+			return fmt.Errorf("failed to cleanup old logs for room %d: %w", roomID, err)
+		}
 	}
 	log.Println("[Executor] Cleanup log task completed successfully")
 	return nil
 }
 func (e *TaskExecutor) executeBroadcast(params map[string]interface{}) error {
 	log.Println("[Executor] Executing broadcast task...")
-	roomID := 0
-	if id, ok := params["roomId"].(float64); ok {
-		roomID = int(id)
-	}
-	if roomID == 0 {
-		return fmt.Errorf("room ID is required for broadcast task")
-	}
 	message := ""
 	if msg, ok := params["message"].(string); ok {
 		message = msg
@@ -243,22 +263,21 @@ func (e *TaskExecutor) executeBroadcast(params map[string]interface{}) error {
 	if message == "" {
 		return fmt.Errorf("message is required for broadcast task")
 	}
-	log.Printf("[Executor] Sending broadcast to room %d: %s", roomID, message)
-	if err := e.broadcastHandler.SendBroadcast(roomID, message); err != nil {
-		return fmt.Errorf("failed to send broadcast: %w", err)
+	roomIDs, err := e.resolveTaskRoomIDs(params, false)
+	if err != nil {
+		return fmt.Errorf("%w for broadcast task", err)
+	}
+	for _, roomID := range roomIDs {
+		log.Printf("[Executor] Sending broadcast to room %d: %s", roomID, message)
+		if err := e.broadcastHandler.SendBroadcast(roomID, message); err != nil {
+			return fmt.Errorf("failed to send broadcast to room %d: %w", roomID, err)
+		}
 	}
 	log.Println("[Executor] Broadcast task completed successfully")
 	return nil
 }
 func (e *TaskExecutor) executeCustomCommand(params map[string]interface{}) error {
 	log.Println("[Executor] Executing custom command task...")
-	roomID := 0
-	if id, ok := params["roomId"].(float64); ok {
-		roomID = int(id)
-	}
-	if roomID == 0 {
-		return fmt.Errorf("room ID is required for custom command task")
-	}
 	command := ""
 	if cmd, ok := params["command"].(string); ok {
 		command = cmd
@@ -266,10 +285,76 @@ func (e *TaskExecutor) executeCustomCommand(params map[string]interface{}) error
 	if command == "" {
 		return fmt.Errorf("command is required for custom command task")
 	}
-	log.Printf("[Executor] Executing command on room %d: %s", roomID, command)
-	if err := e.customCommandHandler.ExecuteCommand(roomID, command); err != nil {
-		return fmt.Errorf("failed to execute command: %w", err)
+	roomIDs, err := e.resolveTaskRoomIDs(params, false)
+	if err != nil {
+		return fmt.Errorf("%w for custom command task", err)
+	}
+	for _, roomID := range roomIDs {
+		log.Printf("[Executor] Executing command on room %d: %s", roomID, command)
+		if err := e.customCommandHandler.ExecuteCommand(roomID, command); err != nil {
+			return fmt.Errorf("failed to execute command on room %d: %w", roomID, err)
+		}
 	}
 	log.Println("[Executor] Custom command task completed successfully")
 	return nil
+}
+
+type taskRoomSelection struct {
+	roomIDs    []int
+	all        bool
+	legacyZero bool
+}
+
+// New tasks use roomIds so every task type can target multiple rooms. The
+// scalar roomId form remains supported for tasks created by older releases.
+func normalizeTaskRoomSelection(params map[string]interface{}) taskRoomSelection {
+	if raw, ok := params["roomIds"]; ok {
+		roomIDs, all := normalizeBackupRoomIDs(raw)
+		return taskRoomSelection{roomIDs: roomIDs, all: all}
+	}
+
+	raw, ok := params["roomId"]
+	if !ok {
+		return taskRoomSelection{legacyZero: true}
+	}
+	roomID, ok := parseBackupRoomID(raw)
+	if !ok || roomID < 0 {
+		return taskRoomSelection{}
+	}
+	if roomID == 0 {
+		return taskRoomSelection{legacyZero: true}
+	}
+	return taskRoomSelection{roomIDs: []int{roomID}}
+}
+
+func (e *TaskExecutor) resolveTaskRoomIDs(params map[string]interface{}, allowLegacyZero bool) ([]int, error) {
+	selection := normalizeTaskRoomSelection(params)
+	if selection.all {
+		roomIDs, err := e.getAllRoomIDs()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get rooms: %w", err)
+		}
+		return roomIDs, nil
+	}
+	if selection.legacyZero && !allowLegacyZero {
+		return nil, fmt.Errorf("room ID is required")
+	}
+	if len(selection.roomIDs) == 0 {
+		return nil, fmt.Errorf("room ID is required")
+	}
+	return selection.roomIDs, nil
+}
+
+func (e *TaskExecutor) getAllRoomIDs() ([]int, error) {
+	rooms, err := e.roomStorage.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	roomIDs := make([]int, 0, len(rooms))
+	for _, room := range rooms {
+		if room.ID > 0 {
+			roomIDs = append(roomIDs, room.ID)
+		}
+	}
+	return roomIDs, nil
 }

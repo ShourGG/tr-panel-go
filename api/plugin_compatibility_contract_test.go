@@ -27,9 +27,7 @@ func setupInstalledTShockForPluginCompatibilityTest(t *testing.T, major string) 
 		t.Fatalf("create TShock dir: %v", err)
 	}
 	version := major + ".1.0"
-	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("server"), 0755); err != nil {
-		t.Fatalf("write core file: %v", err)
-	}
+	writeTShockCoreFiles(t, tshockDir)
 	if err := os.WriteFile(filepath.Join(tshockDir, ".tshock_version"), []byte(version), 0644); err != nil {
 		t.Fatalf("write version marker: %v", err)
 	}

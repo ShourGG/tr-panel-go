@@ -20,9 +20,7 @@ func TestUninstallGameRejectsMismatchedTShockMajorWithoutDeletingDirectory(t *te
 	if err := os.MkdirAll(tshockDir, 0755); err != nil {
 		t.Fatalf("create tshock directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("server"), 0755); err != nil {
-		t.Fatalf("write tshock core: %v", err)
-	}
+	writeTShockCoreFiles(t, tshockDir)
 	if err := os.WriteFile(filepath.Join(tshockDir, ".tshock_version"), []byte("6.1.0\n"), 0644); err != nil {
 		t.Fatalf("write tshock version: %v", err)
 	}

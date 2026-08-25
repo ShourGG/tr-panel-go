@@ -41,6 +41,12 @@ var (
 	downloadingMutex    sync.RWMutex
 )
 
+var workshopIDRegexp = regexp.MustCompile(`^\d{6,20}$`)
+
+func isValidWorkshopID(workshopID string) bool {
+	return workshopIDRegexp.MatchString(strings.TrimSpace(workshopID))
+}
+
 // Steam Workshop API 缓存
 type workshopCacheEntry struct {
 	data     []byte
@@ -307,9 +313,11 @@ func updateModProgressState(workshopID, modName, status, message string, progres
 			ID:         workshopID,
 			PluginName: modName,
 			Status:     "downloading",
+			Stage:      "preparing",
 			Progress:   0,
 			Message:    "准备下载...",
 			StartTime:  time.Now(),
+			UpdatedAt:  time.Now(),
 		}
 		modDownloadProgress[workshopID] = item
 	}
@@ -320,20 +328,46 @@ func updateModProgressState(workshopID, modName, status, message string, progres
 	if status != "" {
 		item.Status = status
 	}
+	item.Stage = modProgressStage(item.Status, message, item.Stage)
 	if message != "" {
 		item.Message = message
 	}
 	if progress >= 0 {
 		item.Progress = clampProgress(progress)
 	}
+	item.UpdatedAt = time.Now()
 
 	return &models.DownloadProgress{
 		ID:         item.ID,
 		PluginName: item.PluginName,
 		Status:     item.Status,
+		Stage:      item.Stage,
 		Progress:   item.Progress,
 		Message:    item.Message,
 		StartTime:  item.StartTime,
+		UpdatedAt:  item.UpdatedAt,
+	}
+}
+
+func modProgressStage(status, message, previous string) string {
+	text := strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case status == "failed":
+		return "failed"
+	case status == "completed":
+		return "completed"
+	case strings.Contains(text, "steamcmd") || strings.Contains(text, "workshop 组件"):
+		return "preparing"
+	case strings.Contains(text, "查找") || strings.Contains(text, "定位"):
+		return "locating"
+	case strings.Contains(text, "复制") || strings.Contains(text, "安装") || strings.Contains(text, "启用"):
+		return "installing"
+	case strings.Contains(text, "下载") || strings.Contains(text, "downloading") || strings.Contains(text, "%"):
+		return "downloading"
+	case previous != "":
+		return previous
+	default:
+		return "downloading"
 	}
 }
 
@@ -391,9 +425,11 @@ func BroadcastModProgress(workshopID, message string) {
 		"type":       "mod_progress",
 		"workshopId": workshopID,
 		"status":     item.Status,
+		"stage":      item.Stage,
 		"progress":   item.Progress,
 		"message":    item.Message,
 		"name":       item.PluginName,
+		"updatedAt":  item.UpdatedAt,
 	}
 	jsonData, err := json.Marshal(progressData)
 	if err == nil {
@@ -1012,9 +1048,11 @@ func GetDownloadingMods(c *gin.Context) {
 			ID:         item.ID,
 			PluginName: item.PluginName,
 			Status:     item.Status,
+			Stage:      item.Stage,
 			Progress:   item.Progress,
 			Message:    item.Message,
 			StartTime:  item.StartTime,
+			UpdatedAt:  item.UpdatedAt,
 		})
 	}
 
@@ -1037,6 +1075,10 @@ func InstallMod(c *gin.Context) {
 	req.WorkshopID = strings.TrimSpace(req.WorkshopID)
 	if req.WorkshopID == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Workshop ID 不能为空"))
+		return
+	}
+	if !isValidWorkshopID(req.WorkshopID) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Workshop ID 必须是 6-20 位数字"))
 		return
 	}
 	downloadingMutex.Lock()

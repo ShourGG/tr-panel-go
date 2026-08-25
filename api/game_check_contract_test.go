@@ -25,9 +25,7 @@ func TestCheckGameInstalledRecognizesLinuxTShockServer(t *testing.T) {
 	if err := os.MkdirAll(tshockDir, 0755); err != nil {
 		t.Fatalf("create TShock directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tshockDir, "TShock.Server"), []byte("server"), 0755); err != nil {
-		t.Fatalf("create Linux TShock binary: %v", err)
-	}
+	writeTShockCoreFiles(t, tshockDir)
 	if err := os.WriteFile(filepath.Join(tshockDir, ".tshock_version"), []byte("5.2.4\n"), 0644); err != nil {
 		t.Fatalf("create TShock version marker: %v", err)
 	}

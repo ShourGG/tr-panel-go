@@ -30,6 +30,15 @@ type LogMonitor struct {
 	wg                sync.WaitGroup
 }
 
+var (
+	ansiEscapeRegexp         = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	logTimestampRegexp       = regexp.MustCompile(`^\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s*[:|\-]?\s*`)
+	playerJoinRegexp         = regexp.MustCompile(`(?i)^(?:Player\s+)?(.+?)(?:\s*\(([0-9A-Fa-f:.]+):\d+\))?\s+has joined\b`)
+	playerLeaveRegexp        = regexp.MustCompile(`(?i)^(?:Player\s+)?(.+?)\s+has left\b`)
+	chinesePlayerJoinRegexp  = regexp.MustCompile(`^(.+?)已加入。?$`)
+	chinesePlayerLeaveRegexp = regexp.MustCompile(`^(.+?)已离开。?$`)
+)
+
 func NewLogMonitor(
 	db *sql.DB,
 	roomStorage storage.RoomStorage,
@@ -154,31 +163,30 @@ func (m *LogMonitor) parseLine(line string, roomID int) {
 		return
 	}
 
-	joinPattern := regexp.MustCompile(`:\s*(.+?)\s*\(([0-9.]+):(\d+)\)\s*has joined`)
-	if matches := joinPattern.FindStringSubmatch(normalizedLine); matches != nil {
+	if matches := playerJoinRegexp.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
-		ipAddress := matches[2]
+		ipAddress := ""
+		if len(matches) > 2 {
+			ipAddress = strings.TrimSpace(matches[2])
+		}
 		m.handlePlayerJoin(playerName, ipAddress, roomID)
 		return
 	}
 
-	chineseJoinPattern := regexp.MustCompile(`^\s*(.+?)已加入。?\s*$`)
-	if matches := chineseJoinPattern.FindStringSubmatch(normalizedLine); matches != nil {
+	if matches := chinesePlayerJoinRegexp.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
 		ipAddress := m.dequeuePendingPlayerIP(roomID)
 		m.handlePlayerJoin(playerName, ipAddress, roomID)
 		return
 	}
 
-	leavePattern := regexp.MustCompile(`:\s*(.+?)\s*has left`)
-	if matches := leavePattern.FindStringSubmatch(normalizedLine); matches != nil {
+	if matches := playerLeaveRegexp.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
 		m.handlePlayerLeave(playerName, roomID)
 		return
 	}
 
-	chineseLeavePattern := regexp.MustCompile(`^\s*(.+?)已离开。?\s*$`)
-	if matches := chineseLeavePattern.FindStringSubmatch(normalizedLine); matches != nil {
+	if matches := chinesePlayerLeaveRegexp.FindStringSubmatch(normalizedLine); matches != nil {
 		playerName := strings.TrimSpace(matches[1])
 		m.handlePlayerLeave(playerName, roomID)
 		return
@@ -186,9 +194,18 @@ func (m *LogMonitor) parseLine(line string, roomID int) {
 }
 
 func normalizeLogMonitorLine(line string) string {
-	trimmed := strings.TrimSpace(line)
-	trimmed = strings.TrimPrefix(trimmed, "[STDOUT]")
-	return strings.TrimSpace(trimmed)
+	trimmed := ansiEscapeRegexp.ReplaceAllString(strings.TrimSpace(line), "")
+	for strings.HasPrefix(trimmed, "[STDOUT]") {
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "[STDOUT]"))
+	}
+	// Terraria, tModLoader and TShock prepend different logger prefixes. The
+	// event itself is always after the last bracketed prefix when one exists.
+	if lastBracket := strings.LastIndex(trimmed, "]"); lastBracket >= 0 {
+		trimmed = trimmed[lastBracket+1:]
+	}
+	trimmed = logTimestampRegexp.ReplaceAllString(trimmed, "")
+	trimmed = strings.TrimSpace(strings.TrimLeft(trimmed, ":|->"))
+	return trimmed
 }
 
 func (m *LogMonitor) enqueuePendingPlayerIP(roomID int, ipAddress string) {
